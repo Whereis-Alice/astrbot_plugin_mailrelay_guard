@@ -263,6 +263,6 @@ def _as_list(value: Any) -> list[Mapping[str, Any]]:
 
 def _valid_or_none(value: Any) -> str | None:
     try:
-        return validate_email_address(str(value or ""), field_name="QQ ????")
+        return validate_email_address(str(value or ""), field_name="QQ 资料邮箱")
     except MailRelayValidationError:
         return None

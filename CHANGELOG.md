@@ -1,38 +1,35 @@
-# Changelog
+# 更新日志
 
-All notable changes to MailRelay Guard are documented here.
+此文件记录 MailRelay Guard 的重要变更。
+
+## v1.1.1 - 2026-08-09
+
+- 将配置面板的字段说明、LLM 工具说明和参数说明改为中文，便于中文环境直接配置和使用。
+- 将 `README.md`、本更新日志、插件元数据和上游致谢完整中文化。
+- 将 `owner_sender_ids` 与 `admin_sender_ids` 的默认值改为空列表，避免不符合 `platform_id:sender_id` 格式的示例值造成首次配置困惑。保留旧版 `YOUR_QQ_ID` 占位值的安全兼容处理。
+- 明确 `qq_platform_names` 与 `/mailrelay_whoami` 返回的 `platform_id` 对应，并补充 QQ 号邮箱推导的可操作示例。
+- 修复 `/mailrelay_send_test`：未填写真实 `owner_email` 时会拒绝发送，不再可能向示例地址投递测试邮件。
+- 修复 SMTP 主机被显式清空时静默回退到 `smtp.163.com` 的行为，配置不完整时将拒绝投递。
+- 修复未知布尔字符串被当作开启的问题，错误值会回退到各配置项的安全默认值。
 
 ## v1.1.0 - 2026-08-09
 
-- Replaced the draft-only LLM flow with three direct, policy-scoped mail tools:
-  fixed owner delivery, current-user self delivery, and administrator-only
-  third-party delivery.
-- Enforced recipient authority inside the shared SMTP boundary instead of
-  relying on dashboard command permissions or a model's chosen arguments.
-- Added privacy-aware QQ/NapCat self-mail resolution using only the current
-  sender's feature-detected profile data, with a friend-list fallback and no
-  separate NapCat URL configuration.
-- Added private-chat email binding with a one-time verification code, local
-  opt-out through `/mailrelay_unbind`, and optional explicit QQ-number mailbox
-  derivation that remains disabled by default.
-- Added platform-scoped owner/admin allowlists, failure-inclusive per-user
-  attempt limits, success limits, cooldowns, bounded limiter storage, and
-  mode-aware recipient allowlists for administrator delivery.
-- Reworked all public setup and privacy documentation for the direct-delivery
-  model; NetEase 163 defaults and placeholders are now present for every
-  configuration item.
-- Expanded unit coverage for direct tool authorization, self-recipient
-  isolation, binding verification, NapCat feature detection, and rate limits.
-- Raised the declared AstrBot minimum version to 4.25 so direct LLM tools are
-  cleaned up correctly when the plugin is reloaded or uninstalled.
+- 使用三种受策略约束的直接邮件工具替换仅草稿模式：固定主人投递、当前用户自助投递和仅管理员可用的第三方投递。
+- 在共享 SMTP 投递边界执行收件人权限校验，不依赖面板命令权限或模型提供的参数。
+- 增加隐私优先的 QQ/NapCat 自助邮箱解析，仅查询当前发送者可检测的资料；支持好友列表回退，不需要单独配置 NapCat URL。
+- 增加私聊邮箱绑定、一次性验证码验证、`/mailrelay_unbind` 自助删除，以及默认关闭的 QQ 号邮箱推导。
+- 增加带平台范围的主人和管理员白名单、包含失败的单用户尝试限制、成功限制、冷却时间、有限内存的限流记录，以及管理员投递专用收件人白名单。
+- 完善直接投递模式的部署与隐私说明；补充网易 163 默认值，并为需要人工填写的配置提供示例值。
+- 扩展直接工具授权、自助收件人隔离、绑定验证、NapCat 特性检测与限流的单元测试。
+- 将声明的最低 AstrBot 版本提高到 4.25，确保重载或卸载插件时能正确清理直接 LLM 工具。
 
 ## v1.0.0 - 2026-08-09
 
-- Initial independent release for AstrBot 4.16 through 4.x.
-- Added ?? 163 SSL defaults: `smtp.163.com`, port `465`, and `ssl`.
-- Added strict exact-address/domain recipient policy with safe empty-list behavior.
-- Added double authorization for control commands: real AstrBot admin plus sender-ID allowlist.
-- Added SMTP connection tests, explicit manual sends, and fixed-format test mail.
-- Added session-bound, expiring LLM drafts that require a human confirmation command before delivery.
-- Added atomic success-only rate limiting, SMTP timeouts, input validation, and privacy-minimized JSONL audit records.
-- Added unit tests, public setup guidance, and upstream acknowledgement.
+- 独立发布首个版本，适用于 AstrBot 4.16 至 4.x。
+- 增加网易 163 SSL 默认值：`smtp.163.com`、端口 `465` 和 `ssl`。
+- 增加严格的精确邮箱和域名收件人策略，空白名单保持安全拒绝。
+- 为控制命令增加双重授权：真实 AstrBot 管理员权限加发送者身份白名单。
+- 增加 SMTP 连接测试、显式手动发送和固定格式测试邮件。
+- 增加与会话绑定、会过期且必须经人工确认才能投递的 LLM 邮件草稿。
+- 增加仅在成功后计数的原子限流、SMTP 超时、输入校验和隐私最小化 JSONL 审计日志。
+- 增加单元测试、公开配置说明和上游致谢。

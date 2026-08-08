@@ -135,7 +135,7 @@ class PluginFlowTests(unittest.TestCase):
                 subject="Attack",
                 body="Body",
             )
-            self.assertIn("???", denied)
+            self.assertIn("仅允许", denied)
             self.assertEqual(len(sent_calls), 1)
 
             group_denied = await plugin.deliver_from_tool(
@@ -144,7 +144,7 @@ class PluginFlowTests(unittest.TestCase):
                 subject="Group mail",
                 body="Body",
             )
-            self.assertIn("??", group_denied)
+            self.assertIn("私聊", group_denied)
             self.assertEqual(len(sent_calls), 1)
 
         asyncio.run(scenario())
@@ -187,7 +187,7 @@ class PluginFlowTests(unittest.TestCase):
                 subject="Nope",
                 body="Body",
             )
-            self.assertIn("???", denied)
+            self.assertIn("仅允许", denied)
             self.assertEqual(len(sent_calls), 2)
 
             cross_platform = await plugin.deliver_from_tool(
@@ -197,7 +197,7 @@ class PluginFlowTests(unittest.TestCase):
                 subject="Cross-platform attempt",
                 body="Body",
             )
-            self.assertIn("???", cross_platform)
+            self.assertIn("仅允许", cross_platform)
             self.assertEqual(len(sent_calls), 2)
 
         asyncio.run(scenario())
@@ -241,7 +241,34 @@ class PluginFlowTests(unittest.TestCase):
                 )
             ]
 
-            self.assertIn("???", replies[0])
+            self.assertIn("仅允许", replies[0])
+            self.assertEqual(sent_calls, [])
+
+        asyncio.run(scenario())
+
+    def test_test_mail_rejects_placeholder_owner_address(self) -> None:
+        async def scenario() -> None:
+            config = plugin_config(
+                owner_email="your_name@163.com",
+                owner_sender_ids=["aiocqhttp:owner"],
+                admin_sender_ids=["aiocqhttp:owner"],
+            )
+            plugin = MailRelayGuardPlugin(FakeContext(), config)
+            sent_calls = []
+
+            async def fake_send(settings, recipients, subject, body):
+                sent_calls.append((recipients, subject, body))
+                return DeliveryResult("<test@example.com>", tuple(recipients), ())
+
+            plugin._smtp_client.send = fake_send
+            replies = [
+                reply
+                async for reply in plugin.mailrelay_send_test(
+                    FakeEvent(sender_id="owner", admin=True)
+                )
+            ]
+
+            self.assertIn("owner_email", replies[0])
             self.assertEqual(sent_calls, [])
 
         asyncio.run(scenario())
@@ -261,10 +288,10 @@ class PluginFlowTests(unittest.TestCase):
                 plugin._smtp_client.send = fake_send
                 user = FakeEvent(sender_id="new-user", private=True)
                 response = await plugin.request_mailbox_binding(user, "new@example.com")
-                self.assertIn("??????", response)
-                code = re.search(r"???:(\d{6})", sent_calls[0][2]).group(1)
+                self.assertIn("验证码已发送", response)
+                code = re.search(r"验证码：(\d{6})", sent_calls[0][2]).group(1)
                 verified = await plugin.verify_mailbox_binding(user, code)
-                self.assertIn("???", verified)
+                self.assertIn("已验证", verified)
 
                 response = await plugin.deliver_from_tool(
                     event=user,

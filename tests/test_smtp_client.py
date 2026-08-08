@@ -69,8 +69,8 @@ class SMTPClientTests(unittest.TestCase):
                 client.send(
                     smtp_settings(),
                     ["receiver@example.com"],
-                    "????",
-                    "????",
+                    "测试主题",
+                    "测试正文",
                 )
             )
 
@@ -80,7 +80,7 @@ class SMTPClientTests(unittest.TestCase):
         self.assertEqual(from_addr, "sender@163.com")
         self.assertEqual(to_addrs, ["receiver@example.com"])
         self.assertEqual(message["X-AstrBot-Plugin"], "MailRelayGuard")
-        self.assertIn("????", message.get_content())
+        self.assertIn("测试正文", message.get_content())
         self.assertTrue(result.is_complete)
         self.assertEqual(result.accepted_recipients, ("receiver@example.com",))
 

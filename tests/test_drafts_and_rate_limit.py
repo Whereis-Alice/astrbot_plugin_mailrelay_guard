@@ -64,7 +64,7 @@ class BindingIdentityAndRateLimitTests(unittest.TestCase):
                     ttl_seconds=600,
                     resend_seconds=60,
                 )
-                with self.assertRaisesRegex(MailboxBindingError, "??????"):
+                with self.assertRaisesRegex(MailboxBindingError, "验证码不正确"):
                     await store.verify(
                         actor_key="aiocqhttp:10001",
                         code="000000",
@@ -95,19 +95,19 @@ class BindingIdentityAndRateLimitTests(unittest.TestCase):
                     ttl_seconds=600,
                     resend_seconds=60,
                 )
-                with self.assertRaisesRegex(MailboxBindingError, "???? 1 ?"):
+                with self.assertRaisesRegex(MailboxBindingError, "还可尝试 1 次"):
                     await store.verify(
                         actor_key="aiocqhttp:10001",
                         code="000000",
                         max_attempts=2,
                     )
-                with self.assertRaisesRegex(MailboxBindingError, "??????"):
+                with self.assertRaisesRegex(MailboxBindingError, "错误次数过多"):
                     await store.verify(
                         actor_key="aiocqhttp:10001",
                         code="111111",
                         max_attempts=2,
                     )
-                with self.assertRaisesRegex(MailboxBindingError, "?????"):
+                with self.assertRaisesRegex(MailboxBindingError, "没有待验证"):
                     await store.verify(
                         actor_key="aiocqhttp:10001",
                         code="123456",

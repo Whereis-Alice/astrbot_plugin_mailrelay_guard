@@ -16,6 +16,7 @@ DEFAULT_SMTP_PORT = 465
 DEFAULT_SMTP_SECURITY = "ssl"
 DEFAULT_PLACEHOLDER_ADDRESS = "your_name@163.com"
 DEFAULT_PLACEHOLDER_PASSWORD = "YOUR_163_SMTP_AUTHORIZATION_CODE"
+# Retained so the v1.1.0 list placeholder stays inert after an upgrade.
 DEFAULT_PLACEHOLDER_QQ_ID = "YOUR_QQ_ID"
 
 
@@ -73,8 +74,10 @@ def load_settings(config: Mapping[str, Any] | Any | None) -> MailRelaySettings:
     """Read config defensively and clamp operational limits."""
 
     return MailRelaySettings(
-        enabled=_as_bool(_get(config, "enabled", True), True),
-        smtp_host=_as_text(
+        enabled=_as_bool(
+            _get(config, "enabled", True), True, invalid_default=False
+        ),
+        smtp_host=_as_text_allow_empty(
             _get(config, "smtp_host", DEFAULT_SMTP_HOST), DEFAULT_SMTP_HOST
         ),
         smtp_port=_as_int(
@@ -88,7 +91,9 @@ def load_settings(config: Mapping[str, Any] | Any | None) -> MailRelaySettings:
             {"ssl", "starttls", "plain"},
             DEFAULT_SMTP_SECURITY,
         ),
-        allow_plain_smtp=_as_bool(_get(config, "allow_plain_smtp", False), False),
+        allow_plain_smtp=_as_bool(
+            _get(config, "allow_plain_smtp", False), False, invalid_default=False
+        ),
         smtp_username=_as_text(
             _get(config, "smtp_username", DEFAULT_PLACEHOLDER_ADDRESS),
             DEFAULT_PLACEHOLDER_ADDRESS,
@@ -112,37 +117,47 @@ def load_settings(config: Mapping[str, Any] | Any | None) -> MailRelaySettings:
             DEFAULT_PLACEHOLDER_ADDRESS,
         ),
         owner_sender_ids=frozenset(
-            _as_list(_get(config, "owner_sender_ids", [DEFAULT_PLACEHOLDER_QQ_ID]))
+            _as_list(_get(config, "owner_sender_ids", []))
         ),
         admin_sender_ids=frozenset(
-            _as_list(_get(config, "admin_sender_ids", [DEFAULT_PLACEHOLDER_QQ_ID]))
+            _as_list(_get(config, "admin_sender_ids", []))
         ),
         enable_llm_mail_tools=_as_bool(
-            _get(config, "enable_llm_mail_tools", True), True
+            _get(config, "enable_llm_mail_tools", True), True, invalid_default=False
         ),
         enable_owner_delivery=_as_bool(
-            _get(config, "enable_owner_delivery", True), True
+            _get(config, "enable_owner_delivery", True), True, invalid_default=False
         ),
         enable_self_delivery=_as_bool(
-            _get(config, "enable_self_delivery", True), True
+            _get(config, "enable_self_delivery", True), True, invalid_default=False
         ),
         enable_admin_other_delivery=_as_bool(
-            _get(config, "enable_admin_other_delivery", True), True
+            _get(config, "enable_admin_other_delivery", True),
+            True,
+            invalid_default=False,
         ),
         require_private_chat_for_self_delivery=_as_bool(
-            _get(config, "require_private_chat_for_self_delivery", True), True
+            _get(config, "require_private_chat_for_self_delivery", True),
+            True,
+            invalid_default=True,
         ),
         require_private_chat_for_binding=_as_bool(
-            _get(config, "require_private_chat_for_binding", True), True
+            _get(config, "require_private_chat_for_binding", True),
+            True,
+            invalid_default=True,
         ),
         self_email_overrides=_parse_identity_email_overrides(
             _as_list(_get(config, "self_email_overrides", []))
         ),
         napcat_email_lookup_enabled=_as_bool(
-            _get(config, "napcat_email_lookup_enabled", True), True
+            _get(config, "napcat_email_lookup_enabled", True),
+            True,
+            invalid_default=False,
         ),
         napcat_friend_list_fallback_enabled=_as_bool(
-            _get(config, "napcat_friend_list_fallback_enabled", False), False
+            _get(config, "napcat_friend_list_fallback_enabled", False),
+            False,
+            invalid_default=False,
         ),
         napcat_lookup_timeout_seconds=_as_int(
             _get(config, "napcat_lookup_timeout_seconds", 6),
@@ -161,13 +176,15 @@ def load_settings(config: Mapping[str, Any] | Any | None) -> MailRelaySettings:
             for value in _as_list(_get(config, "qq_platform_names", ["aiocqhttp"]))
         ),
         allow_qq_mailbox_derivation=_as_bool(
-            _get(config, "allow_qq_mailbox_derivation", False), False
+            _get(config, "allow_qq_mailbox_derivation", False),
+            False,
+            invalid_default=False,
         ),
         qq_mail_domain=_as_text(_get(config, "qq_mail_domain", "qq.com"), "qq.com")
         .casefold()
         .lstrip("@"),
         self_binding_enabled=_as_bool(
-            _get(config, "self_binding_enabled", True), True
+            _get(config, "self_binding_enabled", True), True, invalid_default=False
         ),
         verification_code_ttl_seconds=_as_int(
             _get(config, "verification_code_ttl_seconds", 900),
@@ -188,7 +205,9 @@ def load_settings(config: Mapping[str, Any] | Any | None) -> MailRelaySettings:
             maximum=20,
         ),
         restrict_admin_other_recipients=_as_bool(
-            _get(config, "restrict_admin_other_recipients", False), False
+            _get(config, "restrict_admin_other_recipients", False),
+            False,
+            invalid_default=True,
         ),
         admin_other_recipient_allowlist=frozenset(
             _normalize_addresses(
@@ -248,7 +267,9 @@ def load_settings(config: Mapping[str, Any] | Any | None) -> MailRelaySettings:
             minimum=10,
             maximum=10000,
         ),
-        audit_log_enabled=_as_bool(_get(config, "audit_log_enabled", True), True),
+        audit_log_enabled=_as_bool(
+            _get(config, "audit_log_enabled", True), True, invalid_default=True
+        ),
         audit_max_file_kb=_as_int(
             _get(config, "audit_max_file_kb", 512),
             512,
@@ -263,19 +284,19 @@ def configuration_problems(settings: MailRelaySettings) -> list[str]:
 
     problems: list[str] = []
     if not settings.enabled:
-        problems.append("??????????")
+        problems.append("插件已在配置中关闭。")
     if not settings.smtp_host:
-        problems.append("smtp_host ?????")
+        problems.append("smtp_host 不能为空。")
     if settings.smtp_security == "plain" and not settings.allow_plain_smtp:
-        problems.append("?? SMTP ???????;??? SSL ? STARTTLS?")
+        problems.append("明文 SMTP 被安全策略阻止；请使用 SSL 或 STARTTLS。")
     if is_placeholder_address(settings.smtp_username):
-        problems.append("??? smtp_username(???????????)?")
+        problems.append("请填写 smtp_username（网易邮箱的真实邮箱地址）。")
     if _is_placeholder_secret(settings.smtp_password):
-        problems.append("??? smtp_password(???? SMTP ??????)?")
+        problems.append("请填写 smtp_password（网易邮箱 SMTP 客户端授权码）。")
     if is_placeholder_address(settings.sender_address):
-        problems.append("??? sender_address(??? smtp_username ??)?")
+        problems.append("请填写 sender_address（通常与 smtp_username 相同）。")
     if not settings.sender_name:
-        problems.append("sender_name ?????")
+        problems.append("sender_name 不能为空。")
     return problems
 
 
@@ -311,7 +332,16 @@ def _as_text(value: Any, default: str = "") -> str:
     return text or default
 
 
-def _as_bool(value: Any, default: bool) -> bool:
+def _as_text_allow_empty(value: Any, default: str) -> str:
+    """Use the install default only when the dashboard supplies no value."""
+
+    if value is None:
+        return default
+    return str(value).strip()
+
+
+def _as_bool(value: Any, default: bool, *, invalid_default: bool | None = None) -> bool:
+    fallback = default if invalid_default is None else invalid_default
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -320,9 +350,15 @@ def _as_bool(value: Any, default: bool) -> bool:
             return True
         if normalized in {"0", "false", "no", "off", "disabled"}:
             return False
+        return fallback
     if value is None:
         return default
-    return bool(value)
+    if isinstance(value, (int, float)):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+    return fallback
 
 
 def _as_int(value: Any, default: int, *, minimum: int, maximum: int) -> int:

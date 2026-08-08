@@ -51,6 +51,46 @@ class ConfigAndPolicyTests(unittest.TestCase):
         self.assertIn("smtp_username", problems)
         self.assertIn("smtp_password", problems)
 
+    def test_explicitly_blank_smtp_host_does_not_fall_back_to_163(self) -> None:
+        settings = load_settings({"smtp_host": ""})
+
+        self.assertEqual(settings.smtp_host, "")
+        self.assertIn("smtp_host", " ".join(configuration_problems(settings)))
+
+    def test_unknown_boolean_values_use_conservative_settings(self) -> None:
+        settings = load_settings(
+            {
+                "enabled": "开启不了",
+                "allow_plain_smtp": "falsee",
+                "enable_admin_other_delivery": "关闭",
+                "require_private_chat_for_self_delivery": "私聊",
+                "restrict_admin_other_recipients": "不限制",
+                "audit_log_enabled": "日志",
+            }
+        )
+
+        self.assertFalse(settings.enabled)
+        self.assertFalse(settings.allow_plain_smtp)
+        self.assertFalse(settings.enable_admin_other_delivery)
+        self.assertTrue(settings.require_private_chat_for_self_delivery)
+        self.assertTrue(settings.restrict_admin_other_recipients)
+        self.assertTrue(settings.audit_log_enabled)
+
+    def test_schema_labels_are_utf8_and_do_not_use_placeholder_glyphs(self) -> None:
+        schema_path = Path(__file__).parents[1] / "_conf_schema.json"
+        raw = schema_path.read_bytes()
+        schema = json.loads(raw.decode("utf-8"))
+        visible_text = "\n".join(
+            str(item.get(key, ""))
+            for item in schema.values()
+            for key in ("description", "hint")
+        )
+
+        self.assertNotIn("?", visible_text)
+        self.assertNotIn("\ufffd", visible_text)
+        self.assertEqual(schema["owner_sender_ids"]["default"], [])
+        self.assertEqual(schema["admin_sender_ids"]["default"], [])
+
     def test_parse_recipients_deduplicates_common_separators(self) -> None:
         recipients = parse_recipients(
             "allowed@example.com; second@example.org, allowed@example.com"
@@ -68,7 +108,7 @@ class ConfigAndPolicyTests(unittest.TestCase):
             "Done.",
             enforce_recipient_policy=True,
         )
-        with self.assertRaisesRegex(MailRelayValidationError, "?????????"):
+        with self.assertRaisesRegex(MailRelayValidationError, "管理员代发允许范围"):
             validate_dispatch_request(
                 settings,
                 ["outside@example.org"],
@@ -88,7 +128,7 @@ class ConfigAndPolicyTests(unittest.TestCase):
     def test_header_injection_is_rejected_before_smtp(self) -> None:
         settings = configured_settings()
 
-        with self.assertRaisesRegex(MailRelayValidationError, "???"):
+        with self.assertRaisesRegex(MailRelayValidationError, "换行符"):
             validate_dispatch_request(
                 settings,
                 ["allowed@example.com"],

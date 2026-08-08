@@ -79,7 +79,7 @@ class MailboxBindingStore:
                 wait = int(resend_seconds - (now - previous.issued_at))
                 if wait > 0:
                     raise MailboxBindingError(
-                        f"??????,?? {wait} ?????"
+                        f"验证码已发送，请约 {wait} 秒后再试。"
                     )
             self._challenges[actor_key] = PendingVerification(
                 address=address,
@@ -104,16 +104,16 @@ class MailboxBindingStore:
             await self._ensure_loaded_locked()
             challenge = self._challenges.get(actor_key)
             if challenge is None:
-                raise MailboxBindingError("????????,?????????")
+                raise MailboxBindingError("没有待验证的邮箱，请先执行绑定命令。")
             if now >= challenge.expires_at:
                 self._challenges.pop(actor_key, None)
-                raise MailboxBindingError("??????,??????????")
+                raise MailboxBindingError("验证码已过期，请重新执行绑定命令。")
             if not hmac.compare_digest(challenge.code_hash, _hash_code(code.strip())):
                 failed_attempts = challenge.failed_attempts + 1
                 if failed_attempts >= max_attempts:
                     self._challenges.pop(actor_key, None)
                     raise MailboxBindingError(
-                        "?????????,???????,??????????"
+                        "验证码错误次数过多，当前验证已失效，请重新执行绑定命令。"
                     )
                 self._challenges[actor_key] = PendingVerification(
                     address=challenge.address,
@@ -123,7 +123,7 @@ class MailboxBindingStore:
                     failed_attempts=failed_attempts,
                 )
                 remaining = max_attempts - failed_attempts
-                raise MailboxBindingError(f"??????,???? {remaining} ??")
+                raise MailboxBindingError(f"验证码不正确，还可尝试 {remaining} 次。")
 
             binding = BoundMailbox(
                 address=challenge.address,
