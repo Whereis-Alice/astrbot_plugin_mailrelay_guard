@@ -1,14 +1,12 @@
-"""MailRelay Guard: policy-constrained SMTP delivery for AstrBot.
+"""MailRelay Guard: direct, policy-scoped SMTP delivery for AstrBot."""
 
-This is an independent implementation. It intentionally keeps email delivery
-small and explicit: plain-text mail only, no arbitrary attachments, a strict
-recipient policy, administrator confirmation, and an optional LLM draft flow.
-"""
+from __future__ import annotations
 
 import asyncio
+import secrets
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from astrbot.api import AstrBotConfig, FunctionTool, logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -20,36 +18,129 @@ from pydantic import Field
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from .mailrelay_guard.audit import AuditWriter
+from .mailrelay_guard.bindings import MailboxBindingError, MailboxBindingStore
 from .mailrelay_guard.config import (
     MailRelaySettings,
     configuration_problems,
+    is_placeholder_address,
     load_settings,
 )
-from .mailrelay_guard.drafts import DraftAccessError, DraftStore
+from .mailrelay_guard.identity import (
+    ActorIdentity,
+    SelfMailboxResolver,
+    actor_matches_configured_ids,
+    event_is_admin,
+    event_is_private_chat,
+    get_actor_identity,
+)
 from .mailrelay_guard.policy import (
     MailRelayValidationError,
     parse_recipients,
     validate_dispatch_request,
+    validate_email_address,
 )
-from .mailrelay_guard.rate_limit import SuccessWindowRateLimiter
+from .mailrelay_guard.rate_limit import (
+    KeyedWindowRateLimiter,
+    SuccessWindowRateLimiter,
+)
 from .mailrelay_guard.smtp_client import MailRelayTransportError, SMTPMailRelayClient
 
 PLUGIN_ID = "astrbot_plugin_mailrelay_guard"
-PLUGIN_VERSION = "v1.0.0"
-PLUGIN_DESC = "受策略保护的 SMTP 邮件投递：白名单、确认草稿、限流与最小审计。"
-LLM_DRAFT_TOOL_NAME = "mailrelay_prepare_draft"
+PLUGIN_VERSION = "v1.1.0"
 ONE_HOUR_SECONDS = 60 * 60
+RecipientMode = Literal["owner", "self", "other", "binding"]
+
+
+def _tool_event(context: ContextWrapper[AstrAgentContext]) -> AstrMessageEvent | None:
+    """Read the original chat event from AstrBot's FunctionTool wrapper."""
+
+    agent_context = getattr(context, "context", None)
+    event = getattr(agent_context, "event", None)
+    return event if event is not None else None
 
 
 @pydantic_dataclass
-class MailRelayDraftTool(FunctionTool[AstrAgentContext]):
-    """An LLM tool that prepares a draft but cannot send email by itself."""
+class MailRelayNotifyOwnerTool(FunctionTool[AstrAgentContext]):
+    """Directly notify the configured owner; no recipient can be supplied."""
 
     plugin: Any = Field(default=None, repr=False)
-    name: str = LLM_DRAFT_TOOL_NAME
+    name: str = "mailrelay_notify_owner"
     description: str = (
-        "创建一封待管理员确认的纯文本邮件草稿，不会直接发送邮件。"
-        "只在用户明确要求起草邮件且收件人符合 MailRelay Guard 白名单策略时调用。"
+        "Send a plain-text email to the configured owner mailbox. The recipient is "
+        "fixed by plugin configuration and cannot be changed. Use only when the "
+        "current chat sender is the configured owner and an AstrBot administrator."
+    )
+    parameters: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "subject": {"type": "string", "description": "Email subject."},
+                "body": {"type": "string", "description": "Plain-text email body."},
+            },
+            "required": ["subject", "body"],
+            "additionalProperties": False,
+        }
+    )
+
+    async def call(
+        self, context: ContextWrapper[AstrAgentContext], **kwargs: Any
+    ) -> str:
+        if self.plugin is None:
+            return "MailRelay Guard is unavailable."
+        return await self.plugin.deliver_from_tool(
+            event=_tool_event(context),
+            mode="owner",
+            subject=str(kwargs.get("subject", "")),
+            body=str(kwargs.get("body", "")),
+        )
+
+
+@pydantic_dataclass
+class MailRelaySendToSelfTool(FunctionTool[AstrAgentContext]):
+    """Send only to the current sender's resolved, self-owned mailbox."""
+
+    plugin: Any = Field(default=None, repr=False)
+    name: str = "mailrelay_send_to_self"
+    description: str = (
+        "Send a plain-text email only to the current chat sender's verified bound "
+        "mailbox or privacy-aware QQ/NapCat profile mailbox. This tool has no "
+        "recipient parameter and must never be used to send to someone else."
+    )
+    parameters: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "subject": {"type": "string", "description": "Email subject."},
+                "body": {"type": "string", "description": "Plain-text email body."},
+            },
+            "required": ["subject", "body"],
+            "additionalProperties": False,
+        }
+    )
+
+    async def call(
+        self, context: ContextWrapper[AstrAgentContext], **kwargs: Any
+    ) -> str:
+        if self.plugin is None:
+            return "MailRelay Guard is unavailable."
+        return await self.plugin.deliver_from_tool(
+            event=_tool_event(context),
+            mode="self",
+            subject=str(kwargs.get("subject", "")),
+            body=str(kwargs.get("body", "")),
+        )
+
+
+@pydantic_dataclass
+class MailRelaySendToRecipientTool(FunctionTool[AstrAgentContext]):
+    """Administrator-only direct delivery to a caller-provided recipient."""
+
+    plugin: Any = Field(default=None, repr=False)
+    name: str = "mailrelay_send_to_recipient"
+    description: str = (
+        "Send a plain-text email to an explicit recipient. This is for configured "
+        "AstrBot administrators only. Do not call it for ordinary users; use "
+        "mailrelay_send_to_self for a user's own mailbox instead."
     )
     parameters: dict[str, Any] = Field(
         default_factory=lambda: {
@@ -57,39 +148,32 @@ class MailRelayDraftTool(FunctionTool[AstrAgentContext]):
             "properties": {
                 "recipients": {
                     "type": "string",
-                    "description": "一个或多个收件人邮箱，使用英文逗号分隔。",
+                    "description": "One or more email addresses separated by commas.",
                 },
-                "subject": {
-                    "type": "string",
-                    "description": "邮件主题。",
-                },
-                "body": {
-                    "type": "string",
-                    "description": "纯文本邮件正文。",
-                },
+                "subject": {"type": "string", "description": "Email subject."},
+                "body": {"type": "string", "description": "Plain-text email body."},
             },
             "required": ["recipients", "subject", "body"],
+            "additionalProperties": False,
         }
     )
 
     async def call(
-        self,
-        context: ContextWrapper[AstrAgentContext],
-        **kwargs: Any,
+        self, context: ContextWrapper[AstrAgentContext], **kwargs: Any
     ) -> str:
         if self.plugin is None:
-            return "MailRelay Guard 草稿工具尚未绑定插件实例。"
-        event = getattr(getattr(context, "context", None), "event", None)
-        return await self.plugin.prepare_draft_from_llm(
-            event=event,
-            recipients=str(kwargs.get("recipients", "")),
+            return "MailRelay Guard is unavailable."
+        return await self.plugin.deliver_from_tool(
+            event=_tool_event(context),
+            mode="other",
+            recipients_input=str(kwargs.get("recipients", "")),
             subject=str(kwargs.get("subject", "")),
             body=str(kwargs.get("body", "")),
         )
 
 
 class MailRelayGuardPlugin(Star):
-    """A deliberately constrained mail relay for AstrBot 4.16 through 4.x."""
+    """Direct SMTP delivery with recipient modes enforced at the final boundary."""
 
     def __init__(
         self,
@@ -99,15 +183,23 @@ class MailRelayGuardPlugin(Star):
         super().__init__(context, config)
         self.context = context
         self.config = config or {}
+        settings = self._settings()
         self._smtp_client = SMTPMailRelayClient()
-        self._drafts = DraftStore()
-        self._rate_limiter = SuccessWindowRateLimiter()
+        self._global_success_limiter = SuccessWindowRateLimiter()
+        self._actor_success_limiter = KeyedWindowRateLimiter(
+            max_keys=settings.max_tracked_actors
+        )
+        self._actor_attempt_limiter = KeyedWindowRateLimiter(
+            max_keys=settings.max_tracked_actors
+        )
         self._send_lock = asyncio.Lock()
         self._audit_writer: AuditWriter | None = None
-        self._llm_draft_tool_registered = False
+        self._mailboxes: MailboxBindingStore | None = None
+        self._mailbox_resolver = SelfMailboxResolver(None)
+        self._llm_tools_registered = False
 
     async def initialize(self) -> None:
-        """Initialize optional local audit storage and the draft-only LLM tool."""
+        """Prepare private storage and register the direct, mode-scoped LLM tools."""
 
         settings = self._settings()
         try:
@@ -116,78 +208,178 @@ class MailRelayGuardPlugin(Star):
                 data_dir,
                 max_file_kb=settings.audit_max_file_kb,
             )
+            self._mailboxes = MailboxBindingStore(data_dir)
+            self._mailbox_resolver = SelfMailboxResolver(self._mailboxes)
         except (OSError, RuntimeError) as exc:
-            logger.warning("[%s] audit storage unavailable: %s", PLUGIN_ID, exc)
+            logger.warning("[%s] local storage unavailable: %s", PLUGIN_ID, exc)
 
-        if (
-            settings.enabled
-            and settings.enable_llm_draft_tool
-            and settings.llm_tool_allowed_sender_ids
-        ):
-            self.context.add_llm_tools(MailRelayDraftTool(plugin=self))
-            self._llm_draft_tool_registered = True
-        elif settings.enable_llm_draft_tool:
-            logger.warning(
-                "[%s] LLM draft tool was not registered because llm_tool_allowed_sender_ids is empty",
-                PLUGIN_ID,
+        if settings.enabled and settings.enable_llm_mail_tools:
+            self.context.add_llm_tools(
+                MailRelayNotifyOwnerTool(plugin=self),
+                MailRelaySendToSelfTool(plugin=self),
+                MailRelaySendToRecipientTool(plugin=self),
             )
+            self._llm_tools_registered = True
 
         logger.info(
-            "[%s] initialized | smtp=%s:%s security=%s llm_drafts=%s",
+            "[%s] initialized | smtp=%s:%s security=%s direct_tools=%s",
             PLUGIN_ID,
             settings.smtp_host or "(unset)",
             settings.smtp_port,
             settings.smtp_security,
-            self._llm_draft_tool_registered,
+            self._llm_tools_registered,
         )
 
     async def terminate(self) -> None:
-        """Drop sensitive in-memory drafts when the plugin is unloaded."""
+        """Discard in-memory profile caches and pending verification codes."""
 
-        self._drafts = DraftStore()
+        self._mailboxes = None
+        self._mailbox_resolver = SelfMailboxResolver(None)
         logger.info("[%s] terminated", PLUGIN_ID)
 
-    @filter.command("mailrelay_whoami", alias={"邮件中继身份"})
+    @filter.command("mailrelay_whoami", alias={"????"})
     async def mailrelay_whoami(self, event: AstrMessageEvent):
-        """Show only the caller's identifiers used for MailRelay Guard allowlists."""
+        """Show the platform-scoped identity required by owner/admin allowlists."""
 
+        actor = get_actor_identity(event)
+        if actor is None:
+            yield event.plain_result("???????????? ID?")
+            return
         yield event.plain_result(
-            "MailRelay Guard 身份信息\n"
-            f"- sender_id: {self._actor_id(event) or '(无法读取)'}\n"
-            f"- is_admin: {self._is_admin(event)}\n"
-            "将 sender_id 填入 command_allowed_sender_ids；需要 LLM 草稿时，也填入 "
-            "llm_tool_allowed_sender_ids。"
+            "MailRelay Guard ????\n"
+            f"- platform_id: {actor.platform_id}\n"
+            f"- platform_name: {actor.platform_name}\n"
+            f"- sender_id: {actor.sender_id}\n"
+            f"- ?? allowlist ??: {actor.key}\n"
+            f"- AstrBot admin: {event_is_admin(event)}"
         )
 
-    @filter.command("mailrelay_status", alias={"邮件中继状态"})
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    async def mailrelay_status(self, event: AstrMessageEvent):
-        """Show protected, redacted configuration and readiness status."""
+    @filter.command("mailrelay_identity", alias={"??????"})
+    async def mailrelay_identity(self, event: AstrMessageEvent):
+        """Show whether the caller has a self-delivery mailbox, without revealing it."""
 
         settings = self._settings()
-        denied = self._control_denial_reason(event, settings)
-        if denied:
-            yield event.plain_result(f"无法查看 MailRelay Guard 状态：{denied}")
+        actor = get_actor_identity(event)
+        if actor is None:
+            yield event.plain_result("???????????? ID?")
+            return
+        mailbox = await self._mailbox_resolver.resolve(event, settings, actor)
+        if mailbox is None:
+            yield event.plain_result(
+                "??????'????'????????????? "
+                "/mailrelay_bind ????,??????????? /mailrelay_verify?"
+            )
+            return
+        yield event.plain_result(
+            "????????????\n"
+            f"- ??: {_mailbox_source_label(mailbox.source)}\n"
+            "- ?????,???????????"
+        )
+
+    @filter.command("mailrelay_bind", alias={"??????"})
+    async def mailrelay_bind(self, event: AstrMessageEvent, email: str = ""):
+        """Email a one-time code to bind the sender's own fallback mailbox."""
+
+        yield event.plain_result(await self.request_mailbox_binding(event, email))
+
+    @filter.command("mailrelay_verify", alias={"??????"})
+    async def mailrelay_verify(self, event: AstrMessageEvent, code: str = ""):
+        """Confirm a pending self-mailbox binding using its emailed code."""
+
+        yield event.plain_result(await self.verify_mailbox_binding(event, code))
+
+    @filter.command("mailrelay_unbind", alias={"??????"})
+    async def mailrelay_unbind(self, event: AstrMessageEvent):
+        """Delete the caller's stored self-mailbox binding."""
+
+        yield event.plain_result(await self.remove_mailbox_binding(event))
+
+    @filter.command("mailrelay_self", alias={"?????"})
+    async def mailrelay_self(self, event: AstrMessageEvent, payload: GreedyStr):
+        """Directly send a plain-text email to the current sender only."""
+
+        try:
+            subject, body = _parse_subject_body(payload)
+        except MailRelayValidationError as exc:
+            yield event.plain_result(f"?????:{exc}")
+            return
+        yield event.plain_result(
+            await self.deliver_from_tool(
+                event=event,
+                mode="self",
+                subject=subject,
+                body=body,
+                action="command_self",
+            )
+        )
+
+    @filter.command("mailrelay_owner", alias={"?????"})
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def mailrelay_owner(self, event: AstrMessageEvent, payload: GreedyStr):
+        """Directly notify the fixed owner mailbox for the configured owner only."""
+
+        try:
+            subject, body = _parse_subject_body(payload)
+        except MailRelayValidationError as exc:
+            yield event.plain_result(f"?????:{exc}")
+            return
+        yield event.plain_result(
+            await self.deliver_from_tool(
+                event=event,
+                mode="owner",
+                subject=subject,
+                body=body,
+                action="command_owner",
+            )
+        )
+
+    @filter.command("mailrelay_send", alias={"??????"})
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def mailrelay_send(self, event: AstrMessageEvent, payload: GreedyStr):
+        """Administrator-only delivery to explicitly specified recipients."""
+
+        try:
+            recipients, subject, body = _parse_other_payload(payload)
+        except MailRelayValidationError as exc:
+            yield event.plain_result(f"?????:{exc}")
+            return
+        yield event.plain_result(
+            await self.deliver_from_tool(
+                event=event,
+                mode="other",
+                recipients_input=recipients,
+                subject=subject,
+                body=body,
+                action="command_other",
+            )
+        )
+
+    @filter.command("mailrelay_status", alias={"??????"})
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def mailrelay_status(self, event: AstrMessageEvent):
+        """Show administrator-only redacted configuration and readiness state."""
+
+        settings = self._settings()
+        actor = get_actor_identity(event)
+        if not self._is_configured_admin(event, actor, settings):
+            yield event.plain_result("???? MailRelay Guard ??:????? AstrBot ??????")
             return
         yield event.plain_result(self._format_status(settings))
 
-    @filter.command("mailrelay_smtp_test", alias={"邮件中继连接测试"})
+    @filter.command("mailrelay_smtp_test", alias={"????????"})
     @filter.permission_type(filter.PermissionType.ADMIN)
     async def mailrelay_smtp_test(self, event: AstrMessageEvent):
-        """Test SMTP TLS/login without delivering any email."""
+        """Test SMTP TLS/login without sending an email."""
 
         settings = self._settings()
-        denied = self._control_denial_reason(event, settings)
-        if denied:
-            yield event.plain_result(f"SMTP 测试未执行：{denied}")
+        actor = get_actor_identity(event)
+        if not self._is_configured_admin(event, actor, settings):
+            yield event.plain_result("SMTP ?????:????? AstrBot ??????")
             return
         problems = configuration_problems(settings)
         if problems:
-            yield event.plain_result(
-                self._format_configuration_problem("SMTP 测试未执行", problems)
-            )
+            yield event.plain_result(self._format_configuration_problem("SMTP ?????", problems))
             return
-
         try:
             await self._smtp_client.test_connection(settings)
         except MailRelayTransportError as exc:
@@ -195,301 +387,446 @@ class MailRelayGuardPlugin(Star):
                 settings,
                 action="smtp_test",
                 outcome="failed",
-                actor_id=self._actor_id(event),
+                actor=actor,
                 detail="transport_error",
             )
             logger.warning("[%s] SMTP test failed: %s", PLUGIN_ID, exc)
-            yield event.plain_result(f"SMTP 测试失败：{exc}")
+            yield event.plain_result(f"SMTP ????:{exc}")
             return
-
         await self._audit(
             settings,
             action="smtp_test",
             outcome="succeeded",
-            actor_id=self._actor_id(event),
+            actor=actor,
         )
-        yield event.plain_result("SMTP 连接和登录测试成功，尚未发送邮件。")
+        yield event.plain_result("SMTP ?????????,???????")
 
-    @filter.command("mailrelay_send", alias={"邮件中继发送"})
+    @filter.command("mailrelay_send_test", alias={"????????"})
     @filter.permission_type(filter.PermissionType.ADMIN)
-    async def mailrelay_send(self, event: AstrMessageEvent, payload: GreedyStr):
-        """Send after explicit administrator input: recipient | subject | body."""
+    async def mailrelay_send_test(self, event: AstrMessageEvent):
+        """Send a fixed test message only to the configured owner mailbox."""
 
         settings = self._settings()
-        denied = self._control_denial_reason(event, settings)
+        actor = get_actor_identity(event)
+        if not self._is_configured_admin(event, actor, settings):
+            yield event.plain_result("???????:????? AstrBot ??????")
+            return
+        denied = self._authorization_denial(event, actor, settings, "owner")
         if denied:
-            yield event.plain_result(f"邮件未发送：{denied}")
-            return
-        try:
-            recipients, subject, body = _parse_send_payload(payload)
-        except MailRelayValidationError as exc:
-            yield event.plain_result(f"邮件未发送：{exc}")
-            return
-        yield event.plain_result(
-            await self._dispatch(
-                event=event,
-                settings=settings,
-                recipients_input=recipients,
-                subject=subject,
-                body=body,
-                action="manual_send",
-            )
-        )
-
-    @filter.command("mailrelay_send_test", alias={"邮件中继发测试信"})
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    async def mailrelay_send_test(self, event: AstrMessageEvent, recipient: str = ""):
-        """Send a fixed test message to the configured or supplied recipient."""
-
-        settings = self._settings()
-        denied = self._control_denial_reason(event, settings)
-        if denied:
-            yield event.plain_result(f"测试邮件未发送：{denied}")
-            return
-        target = recipient.strip() or settings.test_recipient
-        if not target:
-            yield event.plain_result(
-                "测试邮件未发送：请填写 test_recipient，或在命令后提供收件人邮箱。"
-            )
+            yield event.plain_result(f"???????:{denied}")
             return
         now_text = time.strftime("%Y-%m-%d %H:%M:%S")
         yield event.plain_result(
-            await self._dispatch(
+            await self._deliver(
                 event=event,
+                actor=actor,
                 settings=settings,
-                recipients_input=target,
-                subject="MailRelay Guard SMTP 测试邮件",
+                mode="owner",
+                recipients=[settings.owner_email],
+                subject="MailRelay Guard SMTP ????",
                 body=(
-                    "这是一封由 MailRelay Guard 发出的测试邮件。\n"
-                    f"发送时间：{now_text}\n"
-                    "如果你收到此邮件，说明 SMTP 配置、TLS 和授权码工作正常。"
+                    "????? MailRelay Guard ????????\n"
+                    f"????:{now_text}\n"
+                    "????????,?? SMTP?TLS ?????????"
                 ),
-                action="test_send",
+                action="test_owner",
             )
         )
 
-    @filter.command("mailrelay_confirm", alias={"邮件中继确认"})
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    async def mailrelay_confirm(self, event: AstrMessageEvent, token: str):
-        """Confirm a session-bound LLM draft and perform the one allowed delivery."""
-
-        settings = self._settings()
-        denied = self._control_denial_reason(event, settings)
-        if denied:
-            yield event.plain_result(f"草稿未确认：{denied}")
-            return
-        problems = configuration_problems(settings)
-        if problems:
-            yield event.plain_result(
-                self._format_configuration_problem("草稿未确认", problems)
-            )
-            return
-
-        actor_id = self._actor_id(event)
-        origin = self._origin(event)
-        async with self._send_lock:
-            try:
-                draft = await self._drafts.get_for_actor(
-                    token,
-                    actor_id=actor_id,
-                    unified_msg_origin=origin,
-                )
-            except DraftAccessError as exc:
-                response = f"草稿未确认：{exc}"
-            else:
-                try:
-                    # Policy may change after a draft was created, so it is checked
-                    # again at the final external-action boundary.
-                    validate_dispatch_request(
-                        settings,
-                        list(draft.recipients),
-                        draft.subject,
-                        draft.body,
-                    )
-                except MailRelayValidationError as exc:
-                    await self._audit(
-                        settings,
-                        action="draft_confirm",
-                        outcome="blocked",
-                        actor_id=actor_id,
-                        recipients=list(draft.recipients),
-                        detail=type(exc).__name__,
-                    )
-                    response = f"草稿未确认：{exc}"
-                else:
-                    succeeded, response = await self._deliver_validated_locked(
-                        event=event,
-                        settings=settings,
-                        recipients=list(draft.recipients),
-                        subject=draft.subject,
-                        body=draft.body,
-                        action="draft_confirm",
-                    )
-                    if succeeded:
-                        await self._drafts.remove_for_actor(
-                            draft.token,
-                            actor_id=actor_id,
-                            unified_msg_origin=origin,
-                        )
-        yield event.plain_result(response)
-
-    @filter.command("mailrelay_cancel", alias={"邮件中继取消"})
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    async def mailrelay_cancel(self, event: AstrMessageEvent, token: str):
-        """Discard a session-bound LLM draft without contacting SMTP."""
-
-        settings = self._settings()
-        denied = self._control_denial_reason(event, settings)
-        if denied:
-            yield event.plain_result(f"草稿未取消：{denied}")
-            return
-        try:
-            async with self._send_lock:
-                await self._drafts.remove_for_actor(
-                    token,
-                    actor_id=self._actor_id(event),
-                    unified_msg_origin=self._origin(event),
-                )
-        except DraftAccessError as exc:
-            yield event.plain_result(f"草稿未取消：{exc}")
-            return
-        await self._audit(
-            settings,
-            action="draft_cancel",
-            outcome="succeeded",
-            actor_id=self._actor_id(event),
-        )
-        yield event.plain_result("草稿已取消，未发送任何邮件。")
-
-    async def prepare_draft_from_llm(
+    async def deliver_from_tool(
         self,
         *,
         event: AstrMessageEvent | None,
-        recipients: str,
+        mode: RecipientMode,
         subject: str,
         body: str,
+        recipients_input: str = "",
+        action: str | None = None,
     ) -> str:
-        """Create a constrained draft for an allowlisted administrator only."""
+        """The shared final boundary for LLM tools and interactive commands."""
 
-        settings = self._settings()
         if event is None:
-            return "无法创建草稿：当前没有会话事件。"
-        if not settings.enable_llm_draft_tool:
-            return "LLM 草稿工具已关闭。"
-        if not self._is_admin(event):
-            return "无法创建草稿：当前会话发送者不是 AstrBot 管理员。"
-        actor_id = self._actor_id(event)
-        if not actor_id or actor_id not in settings.llm_tool_allowed_sender_ids:
-            return "无法创建草稿：当前发送者不在 llm_tool_allowed_sender_ids 中。"
-        problems = configuration_problems(settings)
-        if problems:
-            return self._format_configuration_problem("无法创建草稿", problems)
-
-        try:
-            parsed_recipients = parse_recipients(recipients)
-            validate_dispatch_request(settings, parsed_recipients, subject, body)
-            draft = await self._drafts.create(
-                actor_id=actor_id,
-                unified_msg_origin=self._origin(event),
-                recipients=parsed_recipients,
-                subject=subject.strip(),
-                body=body.strip(),
-                ttl_seconds=settings.draft_ttl_seconds,
-                max_pending_for_actor=settings.max_pending_drafts_per_actor,
-            )
-        except (MailRelayValidationError, DraftAccessError) as exc:
+            return "?????:???????????"
+        settings = self._settings()
+        actor = get_actor_identity(event)
+        if actor is None:
+            return "?????:???????????? ID?"
+        actual_action = action or f"llm_{mode}"
+        denied = self._authorization_denial(event, actor, settings, mode)
+        if denied:
             await self._audit(
                 settings,
-                action="llm_draft",
+                action=actual_action,
                 outcome="blocked",
-                actor_id=actor_id,
-                detail=type(exc).__name__,
+                actor=actor,
+                detail="authorization",
             )
-            return f"无法创建草稿：{exc}"
+            return f"?????:{denied}"
 
-        await self._audit(
-            settings,
-            action="llm_draft",
-            outcome="created",
-            actor_id=actor_id,
-            recipients=list(draft.recipients),
-        )
-        ttl_minutes = max(1, int((draft.expires_at - time.monotonic()) / 60))
-        return (
-            "已创建待确认邮件草稿，尚未发送。\n"
-            f"- 收件人数量：{len(draft.recipients)}\n"
-            f"- 确认令牌：{draft.token}\n"
-            f"- 有效期：约 {ttl_minutes} 分钟\n"
-            f"创建者需在当前会话执行 /mailrelay_confirm {draft.token} 才会发送；"
-            f"可执行 /mailrelay_cancel {draft.token} 取消。"
-        )
-
-    async def _dispatch(
-        self,
-        *,
-        event: AstrMessageEvent,
-        settings: MailRelaySettings,
-        recipients_input: str,
-        subject: str,
-        body: str,
-        action: str,
-    ) -> str:
         problems = configuration_problems(settings)
         if problems:
-            return self._format_configuration_problem("邮件未发送", problems)
+            return self._format_configuration_problem("?????", problems)
+
         try:
-            recipients = parse_recipients(recipients_input)
-            validate_dispatch_request(settings, recipients, subject, body)
+            recipients = await self._recipients_for_mode(
+                event=event,
+                actor=actor,
+                settings=settings,
+                mode=mode,
+                recipients_input=recipients_input,
+            )
+            validate_dispatch_request(
+                settings,
+                recipients,
+                subject,
+                body,
+                enforce_recipient_policy=(
+                    mode == "other" and settings.restrict_admin_other_recipients
+                ),
+            )
         except MailRelayValidationError as exc:
             await self._audit(
                 settings,
-                action=action,
+                action=actual_action,
                 outcome="blocked",
-                actor_id=self._actor_id(event),
+                actor=actor,
                 detail=type(exc).__name__,
             )
-            return f"邮件未发送：{exc}"
+            return f"?????:{exc}"
 
+        return await self._deliver(
+            event=event,
+            actor=actor,
+            settings=settings,
+            mode=mode,
+            recipients=recipients,
+            subject=subject.strip(),
+            body=body.strip(),
+            action=actual_action,
+        )
+
+    async def request_mailbox_binding(
+        self, event: AstrMessageEvent, email: str
+    ) -> str:
+        """Send a verification code before storing a caller-provided fallback email."""
+
+        settings = self._settings()
+        actor = get_actor_identity(event)
+        if actor is None:
+            return "?????:???????????? ID?"
+        if not settings.enable_self_delivery:
+            return "?????:?????????????"
+        if not settings.self_binding_enabled:
+            return "?????:?????????????"
+        if settings.require_private_chat_for_binding and not event_is_private_chat(event):
+            return "?????:?????????,??????????????"
+        problems = configuration_problems(settings)
+        if problems:
+            return self._format_configuration_problem("?????", problems)
+        if self._mailboxes is None:
+            return "?????:?????????,???????????"
+
+        try:
+            address = validate_email_address(email, field_name="??????")
+        except MailRelayValidationError as exc:
+            return f"?????:{exc}"
+
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        try:
+            await self._mailboxes.issue_challenge(
+                actor_key=actor.key,
+                address=address,
+                code=code,
+                ttl_seconds=settings.verification_code_ttl_seconds,
+                resend_seconds=settings.verification_resend_seconds,
+            )
+        except MailboxBindingError as exc:
+            return f"?????:{exc}"
+
+        result = await self._deliver(
+            event=event,
+            actor=actor,
+            settings=settings,
+            mode="binding",
+            recipients=[address],
+            subject="MailRelay Guard ???????",
+            body=(
+                "???????????????,??'????'?\n"
+                f"???:{code}\n"
+                f"???:{settings.verification_code_ttl_seconds // 60} ???\n"
+                "??????????,???????"
+            ),
+            action="binding_challenge",
+            expose_recipient=False,
+        )
+        if not result.startswith("?????"):
+            await self._mailboxes.discard_challenge(actor.key)
+            return result.replace("??", "?????", 1)
+        return (
+            "??????????????????????????? "
+            "/mailrelay_verify ??????"
+        )
+
+    async def verify_mailbox_binding(self, event: AstrMessageEvent, code: str) -> str:
+        """Persist a mailbox only after the current sender proves control of it."""
+
+        settings = self._settings()
+        actor = get_actor_identity(event)
+        if actor is None:
+            return "?????:???????????? ID?"
+        if not settings.self_binding_enabled:
+            return "?????:?????????????"
+        if settings.require_private_chat_for_binding and not event_is_private_chat(event):
+            return "?????:???????????????"
+        if self._mailboxes is None:
+            return "?????:??????????"
+        code = code.strip()
+        if not code:
+            return "?????:?????????????"
+        if len(code) != 6 or not code.isdecimal():
+            return "?????:???????????"
+        try:
+            binding = await self._mailboxes.verify(
+                actor_key=actor.key,
+                code=code,
+                max_attempts=settings.verification_max_attempts,
+            )
+        except (MailboxBindingError, OSError) as exc:
+            return f"?????:{exc}"
+        await self._audit(
+            settings,
+            action="binding_verify",
+            outcome="succeeded",
+            actor=actor,
+        )
+        return f"????????:{_mask_email(binding.address)}?????????????????"
+
+    async def remove_mailbox_binding(self, event: AstrMessageEvent) -> str:
+        """Delete persisted self-mail data without requiring SMTP to be healthy."""
+
+        settings = self._settings()
+        actor = get_actor_identity(event)
+        if actor is None:
+            return "?????:???????????? ID?"
+        if settings.require_private_chat_for_binding and not event_is_private_chat(event):
+            return "?????:???????????????"
+        if self._mailboxes is None:
+            return "?????:??????????"
+        try:
+            removed = await self._mailboxes.remove(actor.key)
+        except OSError as exc:
+            return f"?????:{exc}"
+        if not removed:
+            return "?????????????"
+        await self._audit(
+            settings,
+            action="binding_remove",
+            outcome="succeeded",
+            actor=actor,
+        )
+        return "????????????"
+
+    async def _recipients_for_mode(
+        self,
+        *,
+        event: AstrMessageEvent,
+        actor: ActorIdentity,
+        settings: MailRelaySettings,
+        mode: RecipientMode,
+        recipients_input: str,
+    ) -> list[str]:
+        if mode == "owner":
+            if is_placeholder_address(settings.owner_email):
+                raise MailRelayValidationError("??? owner_email ?????????????")
+            return [validate_email_address(settings.owner_email, field_name="????")]
+        if mode == "self":
+            mailbox = await self._mailbox_resolver.resolve(event, settings, actor)
+            if mailbox is None:
+                raise MailRelayValidationError(
+                    "????? QQ/NapCat ?????????????"
+                    "???????? /mailrelay_bind ?????"
+                )
+            return [mailbox.address]
+        if mode == "other":
+            return parse_recipients(recipients_input)
+        raise MailRelayValidationError("??????????")
+
+    def _authorization_denial(
+        self,
+        event: AstrMessageEvent,
+        actor: ActorIdentity,
+        settings: MailRelaySettings,
+        mode: RecipientMode,
+    ) -> str:
+        if mode == "owner":
+            if not settings.enable_owner_delivery:
+                return "?????????????"
+            if not event_is_admin(event) or not actor_matches_configured_ids(
+                actor, settings.owner_sender_ids
+            ):
+                return "????????? AstrBot ???????????"
+            return ""
+        if mode == "self":
+            if not settings.enable_self_delivery:
+                return "?????????????"
+            if (
+                settings.require_private_chat_for_self_delivery
+                and not event_is_private_chat(event)
+            ):
+                return "???????,?????????????"
+            return ""
+        if mode == "other":
+            if not settings.enable_admin_other_delivery:
+                return "???????????????"
+            if not self._is_configured_admin(event, actor, settings):
+                return "?????? AstrBot ?????????????"
+            return ""
+        return ""
+
+    def _is_configured_admin(
+        self,
+        event: AstrMessageEvent,
+        actor: ActorIdentity | None,
+        settings: MailRelaySettings,
+    ) -> bool:
+        return event_is_admin(event) and actor_matches_configured_ids(
+            actor, settings.admin_sender_ids
+        )
+
+    async def _deliver(
+        self,
+        *,
+        event: AstrMessageEvent,
+        actor: ActorIdentity | None,
+        settings: MailRelaySettings,
+        mode: RecipientMode,
+        recipients: list[str],
+        subject: str,
+        body: str,
+        action: str,
+        expose_recipient: bool = False,
+    ) -> str:
+        problems = configuration_problems(settings)
+        if problems:
+            return self._format_configuration_problem("?????", problems)
+        try:
+            validate_dispatch_request(
+                settings,
+                recipients,
+                subject,
+                body,
+                enforce_recipient_policy=(
+                    mode == "other" and settings.restrict_admin_other_recipients
+                ),
+            )
+        except MailRelayValidationError as exc:
+            return f"?????:{exc}"
+
+        if actor is None:
+            return "?????:???????????? ID?"
         async with self._send_lock:
-            _succeeded, response = await self._deliver_validated_locked(
+            succeeded, response = await self._deliver_validated_locked(
                 event=event,
+                actor=actor,
                 settings=settings,
+                mode=mode,
                 recipients=recipients,
-                subject=subject.strip(),
-                body=body.strip(),
+                subject=subject,
+                body=body,
                 action=action,
             )
+        if succeeded and expose_recipient:
+            return response
         return response
 
     async def _deliver_validated_locked(
         self,
         *,
         event: AstrMessageEvent,
+        actor: ActorIdentity,
         settings: MailRelaySettings,
+        mode: RecipientMode,
         recipients: list[str],
         subject: str,
         body: str,
         action: str,
     ) -> tuple[bool, str]:
-        if not self._rate_limiter.can_send(
+        if not self._global_success_limiter.can_send(
             max_messages=settings.max_messages_per_hour,
             window_seconds=ONE_HOUR_SECONDS,
         ):
-            remaining = self._rate_limiter.remaining_seconds(
+            remaining = self._global_success_limiter.remaining_seconds(
                 window_seconds=ONE_HOUR_SECONDS
             )
             await self._audit(
                 settings,
                 action=action,
                 outcome="rate_limited",
-                actor_id=self._actor_id(event),
+                actor=actor,
                 recipients=recipients,
+                detail="global_success_limit",
             )
             return (
                 False,
-                f"邮件未发送：已达到每小时 {settings.max_messages_per_hour} 封的投递上限，请约 {remaining} 秒后重试。",
+                f"?????:?????? {settings.max_messages_per_hour} ????????,?? {remaining} ?????",
             )
 
+        if not self._actor_success_limiter.can_record(
+            actor.key,
+            max_events=settings.max_successful_messages_per_actor_per_hour,
+            window_seconds=ONE_HOUR_SECONDS,
+        ):
+            remaining = self._actor_success_limiter.remaining_seconds(
+                actor.key,
+                max_events=settings.max_successful_messages_per_actor_per_hour,
+                window_seconds=ONE_HOUR_SECONDS,
+            )
+            await self._audit(
+                settings,
+                action=action,
+                outcome="rate_limited",
+                actor=actor,
+                recipients=recipients,
+                detail="actor_success_limit",
+            )
+            return (
+                False,
+                (
+                    "?????:???????????????,"
+                    f"?? {remaining} ?????"
+                ),
+            )
+
+        if not self._actor_attempt_limiter.can_record(
+            actor.key,
+            max_events=settings.max_delivery_attempts_per_actor_per_hour,
+            window_seconds=ONE_HOUR_SECONDS,
+            minimum_interval_seconds=settings.actor_min_send_interval_seconds,
+        ):
+            remaining = self._actor_attempt_limiter.remaining_seconds(
+                actor.key,
+                max_events=settings.max_delivery_attempts_per_actor_per_hour,
+                window_seconds=ONE_HOUR_SECONDS,
+                minimum_interval_seconds=settings.actor_min_send_interval_seconds,
+            )
+            await self._audit(
+                settings,
+                action=action,
+                outcome="rate_limited",
+                actor=actor,
+                recipients=recipients,
+                detail="actor_attempt_limit",
+            )
+            return (
+                False,
+                (
+                    "?????:?????????????????,"
+                    f"?? {remaining} ?????"
+                ),
+            )
+
+        # Attempts are charged before SMTP so failed logins cannot be hammered forever.
+        self._actor_attempt_limiter.record(actor.key)
         try:
             result = await self._smtp_client.send(settings, recipients, subject, body)
         except MailRelayTransportError as exc:
@@ -497,74 +834,43 @@ class MailRelayGuardPlugin(Star):
                 settings,
                 action=action,
                 outcome="failed",
-                actor_id=self._actor_id(event),
+                actor=actor,
                 recipients=recipients,
                 detail="transport_error",
             )
             logger.warning("[%s] %s failed: %s", PLUGIN_ID, action, exc)
-            return False, f"邮件未发送：{exc}"
+            return False, f"?????:{exc}"
 
-        # The send lock makes this check-send-record sequence atomic. Only a
-        # server-accepted delivery consumes quota, so failed SMTP attempts stay retryable.
-        self._rate_limiter.record_success()
+        accepted_count = len(result.accepted_recipients)
+        if accepted_count:
+            self._global_success_limiter.record_success()
+            self._actor_success_limiter.record(actor.key)
         outcome = "succeeded" if result.is_complete else "partial"
         await self._audit(
             settings,
             action=action,
             outcome=outcome,
-            actor_id=self._actor_id(event),
+            actor=actor,
             recipients=recipients,
-            detail=f"accepted={len(result.accepted_recipients)} refused={len(result.refused_recipients)}",
-        )
-        if result.is_complete:
-            return (
-                True,
-                f"邮件已提交 SMTP 服务器，共 {len(result.accepted_recipients)} 位收件人。",
-            )
-        return (
-            True,
-            (
-                "邮件已部分提交 SMTP 服务器："
-                f"成功 {len(result.accepted_recipients)} 位，拒绝 {len(result.refused_recipients)} 位。"
+            detail=(
+                f"mode={mode};accepted={accepted_count};"
+                f"refused={len(result.refused_recipients)}"
             ),
         )
+        if result.is_complete:
+            return True, f"????? SMTP ???,? {accepted_count} ?????"
+        if accepted_count:
+            return (
+                True,
+                (
+                    "??????? SMTP ???:"
+                    f"?? {accepted_count} ?,?? {len(result.refused_recipients)} ??"
+                ),
+            )
+        return False, "?????:SMTP ????????????"
 
     def _settings(self) -> MailRelaySettings:
         return load_settings(self.config)
-
-    def _control_denial_reason(
-        self,
-        event: AstrMessageEvent,
-        settings: MailRelaySettings,
-    ) -> str:
-        if not self._is_admin(event):
-            return "当前发送者不是 AstrBot 管理员。"
-        actor_id = self._actor_id(event)
-        if not settings.command_allowed_sender_ids:
-            return "command_allowed_sender_ids 尚未配置。先执行 /mailrelay_whoami 获取自己的 ID。"
-        if actor_id not in settings.command_allowed_sender_ids:
-            return "当前发送者不在 command_allowed_sender_ids 中。"
-        return ""
-
-    @staticmethod
-    def _is_admin(event: AstrMessageEvent) -> bool:
-        checker = getattr(event, "is_admin", None)
-        try:
-            return bool(checker()) if callable(checker) else False
-        except (AttributeError, TypeError):
-            return False
-
-    @staticmethod
-    def _actor_id(event: AstrMessageEvent) -> str:
-        getter = getattr(event, "get_sender_id", None)
-        try:
-            return str(getter() or "").strip() if callable(getter) else ""
-        except (AttributeError, TypeError):
-            return ""
-
-    @staticmethod
-    def _origin(event: AstrMessageEvent) -> str:
-        return str(getattr(event, "unified_msg_origin", "") or "").strip()
 
     async def _audit(
         self,
@@ -572,7 +878,7 @@ class MailRelayGuardPlugin(Star):
         *,
         action: str,
         outcome: str,
-        actor_id: str,
+        actor: ActorIdentity | None,
         recipients: list[str] | tuple[str, ...] = (),
         detail: str = "",
     ) -> None:
@@ -582,7 +888,7 @@ class MailRelayGuardPlugin(Star):
             await self._audit_writer.append(
                 action=action,
                 outcome=outcome,
-                actor_id=actor_id,
+                actor_id=actor.key if actor is not None else "unknown",
                 recipients=recipients,
                 detail=detail,
             )
@@ -591,43 +897,50 @@ class MailRelayGuardPlugin(Star):
 
     def _format_status(self, settings: MailRelaySettings) -> str:
         problems = configuration_problems(settings)
-        readiness = "就绪" if not problems else "需配置"
+        readiness = "??" if not problems else "????"
         lines = [
-            "MailRelay Guard 状态",
-            f"- 就绪状态：{readiness}",
-            f"- SMTP：{settings.smtp_host or '(未填写)'}:{settings.smtp_port} / {settings.smtp_security}",
-            f"- 发件账号：{_mask_email(settings.smtp_username)}",
-            f"- 发件地址：{_mask_email(settings.sender_address)}",
-            f"- 授权码：{'已填写' if settings.smtp_password else '未填写'}",
-            (
-                "- 收件人策略："
-                f"{'严格白名单' if settings.require_recipient_allowlist else '未启用白名单'} "
-                f"(精确地址 {len(settings.recipient_allowlist)}，域名 {len(settings.allowed_recipient_domains)})"
-            ),
-            f"- 控制者 allowlist：{len(settings.command_allowed_sender_ids)} 人",
-            f"- 成功投递限额：每小时 {settings.max_messages_per_hour} 封（重载后重置）",
-            f"- 最小审计：{'开启' if settings.audit_log_enabled else '关闭'}",
-            (
-                "- LLM 草稿工具："
-                f"{'已注册' if self._llm_draft_tool_registered else '未注册'} "
-                f"(允许者 {len(settings.llm_tool_allowed_sender_ids)} 人，仅创建草稿)"
-            ),
+            "MailRelay Guard ??",
+            f"- ????:{readiness}",
+            f"- SMTP:{settings.smtp_host or '(???)'}:{settings.smtp_port} / {settings.smtp_security}",
+            f"- ????:{_mask_email(settings.smtp_username)}",
+            f"- ????:{_mask_email(settings.sender_address)}",
+            f"- ??????:{_mask_email(settings.owner_email)}",
+            f"- ???:{'???' if settings.smtp_password and not settings.smtp_password.startswith('YOUR_') else '???'}",
+            f"- LLM ????:{'???' if self._llm_tools_registered else '???'}",
+            f"- ??????:{'??' if settings.enable_self_delivery else '??'}",
+            f"- ?????:{'??' if settings.enable_admin_other_delivery else '??'}",
+            f"- ????????:{'??' if settings.restrict_admin_other_recipients else '??'}",
+            f"- ????:{'??' if settings.self_binding_enabled else '??'}",
+            f"- NapCat ????:{'??' if settings.napcat_email_lookup_enabled else '??'}",
+            f"- ????????:??? {settings.max_messages_per_hour} ?",
+            f"- ?????????:??? {settings.max_successful_messages_per_actor_per_hour} ?",
+            f"- ???????:{settings.actor_min_send_interval_seconds} ?",
         ]
         if problems:
-            lines.append("- 待处理：")
+            lines.append("- ???:")
             lines.extend(f"  * {problem}" for problem in problems)
         return "\n".join(lines)
 
     @staticmethod
     def _format_configuration_problem(prefix: str, problems: list[str]) -> str:
-        return prefix + "：\n" + "\n".join(f"- {problem}" for problem in problems)
+        return prefix + ":\n" + "\n".join(f"- {problem}" for problem in problems)
 
 
-def _parse_send_payload(payload: str) -> tuple[str, str, str]:
+def _parse_subject_body(payload: str) -> tuple[str, str]:
+    parts = [part.strip() for part in str(payload or "").split("|", 1)]
+    if len(parts) != 2 or not all(parts):
+        raise MailRelayValidationError(
+            "??????:?? | ????,?? /mailrelay_self ?? | ??"
+        )
+    return parts[0], parts[1]
+
+
+def _parse_other_payload(payload: str) -> tuple[str, str, str]:
     parts = [part.strip() for part in str(payload or "").split("|", 2)]
     if len(parts) != 3 or not all(parts):
         raise MailRelayValidationError(
-            "命令格式应为：/mailrelay_send 收件人 | 邮件主题 | 邮件正文"
+            "??????:??? | ?? | ????,?? "
+            "/mailrelay_send person@example.com | ?? | ??"
         )
     return parts[0], parts[1], parts[2]
 
@@ -635,8 +948,19 @@ def _parse_send_payload(payload: str) -> tuple[str, str, str]:
 def _mask_email(value: str) -> str:
     address = str(value or "").strip()
     if not address or "@" not in address:
-        return "未填写"
+        return "???"
     local, domain = address.rsplit("@", 1)
     if len(local) <= 1:
         return f"*@{domain}"
     return f"{local[0]}***@{domain}"
+
+
+def _mailbox_source_label(source: str) -> str:
+    labels = {
+        "configured_override": "??????????",
+        "verified_binding": "?????????",
+        "napcat_profile": "NapCat ?? QQ ??",
+        "napcat_friend_profile": "NapCat QQ ????",
+        "qq_mailbox_derivation": "QQ ?????(???)",
+    }
+    return labels.get(source, "????")

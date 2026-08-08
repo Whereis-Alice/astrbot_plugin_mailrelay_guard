@@ -81,7 +81,7 @@ class SMTPMailRelayClient:
             address for address in recipients if address.casefold() not in refused_keys
         )
         if not accepted:
-            raise MailRelayTransportError("SMTP 服务器拒绝了全部收件人。")
+            raise MailRelayTransportError("SMTP ????????????")
         return DeliveryResult(
             message_id=str(message["Message-ID"]),
             accepted_recipients=accepted,
@@ -152,18 +152,18 @@ class SMTPMailRelayClient:
     def _to_transport_error(exc: Exception) -> MailRelayTransportError:
         if isinstance(exc, smtplib.SMTPAuthenticationError):
             return MailRelayTransportError(
-                "SMTP 登录失败。请检查邮箱账号和 SMTP 授权码。"
+                "SMTP ????????????? SMTP ????"
             )
         if isinstance(exc, smtplib.SMTPRecipientsRefused):
-            return MailRelayTransportError("SMTP 服务器拒绝了收件人。")
+            return MailRelayTransportError("SMTP ??????????")
         if isinstance(exc, smtplib.SMTPConnectError):
             return MailRelayTransportError(
-                "无法连接 SMTP 服务器。请检查服务器地址、端口和网络。"
+                "???? SMTP ???????????????????"
             )
         if isinstance(exc, (socket.timeout, TimeoutError)):
-            return MailRelayTransportError("连接 SMTP 服务器超时。")
+            return MailRelayTransportError("?? SMTP ??????")
         if isinstance(exc, (OSError, smtplib.SMTPException)):
             return MailRelayTransportError(
-                "SMTP 通信失败。请检查服务器配置、网络和加密方式。"
+                "SMTP ??????????????????????"
             )
-        return MailRelayTransportError("邮件发送失败，SMTP 客户端出现未预期错误。")
+        return MailRelayTransportError("??????,SMTP ???????????")

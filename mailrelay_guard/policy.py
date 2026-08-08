@@ -1,4 +1,4 @@
-"""Input and outbound-recipient safeguards for MailRelay Guard."""
+"""Validation and recipient safeguards for MailRelay Guard."""
 
 from __future__ import annotations
 
@@ -12,20 +12,20 @@ _SIMPLE_EMAIL_RE = re.compile(r"^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$")
 
 
 class MailRelayValidationError(ValueError):
-    """Raised when a requested email conflicts with a delivery safeguard."""
+    """Raised when an outbound request is malformed or outside policy."""
 
 
 def parse_recipients(value: str | Iterable[str]) -> list[str]:
-    """Parse one or more bare RFC-like email addresses and remove duplicates."""
+    """Parse bare email addresses, rejecting headers and duplicate targets."""
 
     raw_values = _split_recipient_values(value)
     if not raw_values:
-        raise MailRelayValidationError("请提供至少一个收件人邮箱地址。")
+        raise MailRelayValidationError("???????????????")
 
     recipients: list[str] = []
     seen: set[str] = set()
     for raw in raw_values:
-        address = _validate_bare_address(raw, field_name="收件人")
+        address = validate_email_address(raw, field_name="???")
         key = address.casefold()
         if key not in seen:
             seen.add(key)
@@ -33,36 +33,57 @@ def parse_recipients(value: str | Iterable[str]) -> list[str]:
     return recipients
 
 
+def validate_email_address(value: str, *, field_name: str = "????") -> str:
+    """Accept only one bare RFC-like address, never a display-name header."""
+
+    raw = str(value or "").strip()
+    if not raw:
+        raise MailRelayValidationError(f"{field_name}?????")
+    _reject_header_injection(raw, field_name)
+    parsed_name, parsed_address = parseaddr(raw)
+    if parsed_name or parsed_address != raw or not _SIMPLE_EMAIL_RE.fullmatch(raw):
+        raise MailRelayValidationError(
+            f"{field_name}??????????,?????????"
+        )
+    return raw
+
+
 def validate_dispatch_request(
     settings: MailRelaySettings,
     recipients: list[str],
     subject: str,
     body: str,
+    *,
+    enforce_recipient_policy: bool,
 ) -> None:
-    """Validate a mail body and enforce recipient restrictions."""
+    """Validate content and, when requested, the admin-other allowlist."""
 
+    if not recipients:
+        raise MailRelayValidationError("???????????????")
     if len(recipients) > settings.max_recipients_per_message:
         raise MailRelayValidationError(
-            f"单封邮件最多允许 {settings.max_recipients_per_message} 位收件人。"
+            f"???????? {settings.max_recipients_per_message} ?????"
         )
     if not subject.strip():
-        raise MailRelayValidationError("邮件主题不能为空。")
-    _reject_header_injection(subject, "邮件主题")
-    _reject_header_injection(settings.sender_name, "发件人名称")
+        raise MailRelayValidationError("?????????")
+    _reject_header_injection(subject, "????")
+    _reject_header_injection(settings.sender_name, "?????")
     if len(subject) > settings.max_subject_chars:
         raise MailRelayValidationError(
-            f"邮件主题不能超过 {settings.max_subject_chars} 个字符。"
+            f"???????? {settings.max_subject_chars} ????"
         )
     if not body.strip():
-        raise MailRelayValidationError("邮件正文不能为空。")
+        raise MailRelayValidationError("?????????")
     if len(body) > settings.max_body_chars:
         raise MailRelayValidationError(
-            f"邮件正文不能超过 {settings.max_body_chars} 个字符。"
+            f"???????? {settings.max_body_chars} ????"
         )
 
-    _validate_bare_address(settings.sender_address, field_name="发件人地址")
+    validate_email_address(settings.sender_address, field_name="?????")
     for recipient in recipients:
-        _validate_recipient_policy(settings, recipient)
+        validate_email_address(recipient, field_name="???")
+        if enforce_recipient_policy:
+            _validate_admin_other_recipient_policy(settings, recipient)
 
 
 def _split_recipient_values(value: str | Iterable[str]) -> list[str]:
@@ -79,35 +100,22 @@ def _split_recipient_values(value: str | Iterable[str]) -> list[str]:
     return values
 
 
-def _validate_bare_address(value: str, *, field_name: str) -> str:
-    raw = str(value or "").strip()
-    if not raw:
-        raise MailRelayValidationError(f"{field_name}不能为空。")
-    _reject_header_injection(raw, field_name)
-    parsed_name, parsed_address = parseaddr(raw)
-    if parsed_name or parsed_address != raw or not _SIMPLE_EMAIL_RE.fullmatch(raw):
-        raise MailRelayValidationError(
-            f"{field_name}必须是单独的邮箱地址，不能包含显示名称。"
-        )
-    return raw
-
-
-def _validate_recipient_policy(settings: MailRelaySettings, recipient: str) -> None:
-    if not settings.require_recipient_allowlist:
-        return
-
+def _validate_admin_other_recipient_policy(
+    settings: MailRelaySettings, recipient: str
+) -> None:
     normalized = recipient.casefold()
     domain = normalized.rsplit("@", 1)[-1]
-    if normalized in settings.recipient_allowlist:
+    if normalized in settings.admin_other_recipient_allowlist:
         return
-    if domain in settings.allowed_recipient_domains:
+    if domain in settings.admin_other_allowed_domains:
         return
     raise MailRelayValidationError(
-        "该收件人不在允许范围内。请将其加入 recipient_allowlist，"
-        "或将其域名加入 allowed_recipient_domains。"
+        "?????????????????????? "
+        "admin_other_recipient_allowlist,?????? "
+        "admin_other_allowed_domains?"
     )
 
 
 def _reject_header_injection(value: str, field_name: str) -> None:
     if "\r" in value or "\n" in value:
-        raise MailRelayValidationError(f"{field_name}不能包含换行符。")
+        raise MailRelayValidationError(f"{field_name}????????")

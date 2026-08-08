@@ -1,13 +1,15 @@
 name: astrbot_plugin_mailrelay_guard
 display_name: MailRelay Guard
-desc: 受策略保护的 SMTP 邮件投递插件，提供白名单、确认草稿、限流与最小审计。
-short_desc: 安全的 SMTP 邮件中继与待确认 LLM 草稿。
-version: v1.0.0
+desc: Direct SMTP mail for Alice with owner, self-only, and administrator recipient modes.
+short_desc: Direct Alice mail tools with QQ/NapCat self-mail resolution and enforced recipient authority.
+version: v1.1.0
 author: Huli3
 repo: https://github.com/Whereis-Alice/astrbot_plugin_mailrelay_guard
-astrbot_version: ">=4.16,<5"
+astrbot_version: ">=4.25,<5"
 tags:
   - email
   - smtp
-  - security
+  - napcat
+  - qq
   - automation
+  - security

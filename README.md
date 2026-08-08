@@ -1,203 +1,300 @@
 # MailRelay Guard
 
-`MailRelay Guard` 是一个面向 AstrBot 的受策略保护 SMTP 邮件投递插件。它适合让机器人发送少量、可审计的通知邮件，同时把邮件外发从“模型说发就发”改成“策略校验后，由指定管理员明确确认”。
+MailRelay Guard is an AstrBot SMTP plugin for Alice-style assistants that need
+to send mail directly, with the recipient authority kept in plugin code.
 
-插件标识符为 `astrbot_plugin_mailrelay_guard`，与 `astrbot_plugin_email_tool` 使用不同的插件名、命令名和 LLM 工具名，可同时安装。
+It deliberately does not use a draft-confirmation step for normal delivery.
+Alice can invoke an email tool and mail is submitted immediately after the
+plugin validates the caller, recipient mode, message content, rate limits, and
+SMTP configuration.
 
-## 适用场景
+Plugin id: `astrbot_plugin_mailrelay_guard`
 
-- 给固定地址或固定组织域发送状态通知、测试邮件和人工整理后的摘要。
-- 让 LLM 协助起草邮件，但由管理员在原会话中确认后再投递。
-- 使用网易 163 邮箱作为 SMTP 发件箱。默认已经预填 `smtp.163.com`、端口 `465` 和 `SSL`。
+Requires AstrBot `4.25` or later (and below `5`). This floor avoids stale
+LLM-tool cleanup behavior present in older AstrBot releases.
 
-不适合批量群发、营销邮件、收件箱读取、附件分发或无人值守的任意地址外发。
+## What It Does
 
-## 功能
+The plugin exposes three different LLM tools. They have different parameters
+and different server-side permission checks, so a prompt cannot turn a
+"send to myself" request into a third-party delivery.
 
-| 能力 | 行为 |
-| --- | --- |
-| TLS SMTP 投递 | 支持 SSL、STARTTLS 和显式允许的明文 SMTP；网络操作在后台线程执行，不阻塞 AstrBot 事件循环。 |
-| 严格收件人策略 | 默认开启白名单，且空白名单表示拒绝全部外发，不会退化为“允许所有地址”。 |
-| 双重控制 | 发送、连接测试、状态查看和草稿确认同时要求 AstrBot 管理员身份与 `command_allowed_sender_ids`。 |
-| LLM 待确认草稿 | LLM 只能创建内存中的草稿，无法直接投递；草稿必须由原创建者在原会话中确认。 |
-| 原子限流 | 全局成功投递上限默认每小时 10 封；只有 SMTP 至少接受一位收件人后才消耗额度。 |
-| 最小化审计 | 记录结果、发送者指纹、收件人数和收件域名，不记录授权码、主题或正文。 |
-| 安全输入处理 | 校验裸邮箱地址、去重、限制人数和正文长度，并拒绝邮件头换行注入。 |
-
-## 安装
-
-1. 将整个 `astrbot_plugin_mailrelay_guard` 目录压缩为 ZIP，或通过 AstrBot 的插件安装界面导入该目录。
-2. 在 AstrBot 中启用插件并打开配置页。
-3. 填写下方的“网易 163 邮箱最小配置”。
-4. 先执行 `/mailrelay_whoami`，把返回的 `sender_id` 填入 `command_allowed_sender_ids`，然后重载插件。
-5. 依次执行 `/mailrelay_status`、`/mailrelay_smtp_test` 和 `/mailrelay_send_test` 验证配置。
-
-本插件不依赖额外 PyPI 包。AstrBot 提供插件 API 和 Pydantic；SMTP、TLS 和 MIME 邮件构造均使用 Python 标准库。
-
-## 网易 163 邮箱最小配置
-
-网易 163 默认参数已填好，账号和授权码必须由你自己填写，插件不会写入示例账号或伪造凭据。
-
-| 配置项 | 默认值 | 需要你做的事 |
-| --- | --- | --- |
-| `smtp_host` | `smtp.163.com` | 通常无需修改。 |
-| `smtp_port` | `465` | 通常无需修改。 |
-| `smtp_security` | `ssl` | 通常无需修改。 |
-| `smtp_username` | 空 | 填完整的 163 邮箱地址。 |
-| `smtp_password` | 空 | 填网易邮箱开启 SMTP 后生成的客户端授权码，不是网页登录密码。 |
-| `sender_address` | 空 | 通常与 `smtp_username` 相同。 |
-| `sender_name` | `AstrBot MailRelay Guard` | 可改成机器人或服务名称。 |
-| `recipient_allowlist` | `[]` | 至少添加一个允许接收邮件的完整地址。 |
-| `test_recipient` | 空 | 建议填你的测试收件邮箱。 |
-| `command_allowed_sender_ids` | `[]` | 填允许控制插件的 AstrBot 管理员 sender ID。 |
-
-建议的起始配置如下。邮箱地址、授权码和 sender ID 都只是字段说明，必须替换成你自己的值：
-
-```json
-{
-  "smtp_username": "your_name@163.com",
-  "smtp_password": "网易客户端授权码",
-  "sender_address": "your_name@163.com",
-  "sender_name": "AstrBot 通知",
-  "recipient_allowlist": ["your_name@163.com"],
-  "test_recipient": "your_name@163.com",
-  "command_allowed_sender_ids": ["你的平台用户 ID"]
-}
-```
-
-在网易邮箱网页端开启 SMTP/IMAP 服务后，创建“客户端授权码”并填入 `smtp_password`。网易的页面文案可能随版本变化；不要把网页登录密码填写到这里，也不要把授权码贴到聊天记录、截图或公开仓库。
-
-## 命令
-
-除 `/mailrelay_whoami` 外，以下控制命令都要求：
-
-1. 发起者是 AstrBot 管理员。
-2. 发起者的 `sender_id` 在 `command_allowed_sender_ids` 中。
-
-| 命令 | 说明 |
-| --- | --- |
-| `/mailrelay_whoami` | 显示调用者自己的 `sender_id` 与管理员状态，用于首次配置。 |
-| `/mailrelay_status` | 显示脱敏后的 SMTP、收件人策略、限流和就绪状态。 |
-| `/mailrelay_smtp_test` | 只测试 SMTP TLS 连接和登录，不发送邮件。 |
-| `/mailrelay_send_test [邮箱]` | 向传入地址或 `test_recipient` 发送固定测试邮件。 |
-| `/mailrelay_send 收件人 | 主题 | 正文` | 发送纯文本邮件；收件人可用英文逗号或分号分隔。 |
-| `/mailrelay_confirm 令牌` | 确认当前会话中由 LLM 创建的待确认草稿。 |
-| `/mailrelay_cancel 令牌` | 取消当前会话中由 LLM 创建的待确认草稿。 |
-
-手动发送示例：
-
-```text
-/mailrelay_send receiver@example.com | 例行通知 | 服务已完成本次任务。
-```
-
-命令使用竖线分隔三段，因此主题和正文可以包含空格。V1 只发送纯文本；不提供 HTML、抄送、密送和附件，避免把本插件变成不受控制的数据外发通道。
-
-## 收件人策略
-
-默认 `require_recipient_allowlist=true`。此时一位收件人满足以下任一条件才允许投递：
-
-- 完整邮箱地址在 `recipient_allowlist` 中；
-- 收件人域名在 `allowed_recipient_domains` 中。
-
-例如，要允许 `ops@example.com` 与整个 `example.org` 域：
-
-```json
-{
-  "recipient_allowlist": ["ops@example.com"],
-  "allowed_recipient_domains": ["example.org"]
-}
-```
-
-`allowed_recipient_domains` 留空不会放开限制。若你关闭 `require_recipient_allowlist`，插件会允许任意合法邮箱地址，这会显著扩大提示注入、误操作和数据泄露风险，不建议在公共群聊或多人环境中使用。
-
-## LLM 草稿与确认
-
-LLM 功能默认关闭。若确实需要让模型帮你整理邮件，请完成以下配置并重载插件：
-
-```json
-{
-  "enable_llm_draft_tool": true,
-  "llm_tool_allowed_sender_ids": ["你的平台用户 ID"],
-  "draft_ttl_seconds": 600
-}
-```
-
-启用后，模型只能调用 `mailrelay_prepare_draft` 创建草稿。它会经过同一套收件人、长度和管理员策略校验，并返回一次性确认令牌。邮件内容仅保存在内存中，不能跨插件重载恢复；创建者必须在同一会话使用 `/mailrelay_confirm <令牌>` 才会真正投递。
-
-这种设计刻意不提供“LLM 直接发信”开关。模型输出、网页内容和群聊内容都可能受到提示注入影响；明确的人类确认是邮件外发边界的一部分。
-
-## 配置参考
-
-| 分组 | 配置项 | 默认值 | 说明 |
+| Request | LLM tool | Actual recipient | Who may use it |
 | --- | --- | --- | --- |
-| 基础 | `enabled` | `true` | 插件总开关。 |
-| SMTP | `smtp_host` | `smtp.163.com` | SMTP 主机。 |
-| SMTP | `smtp_port` | `465` | SMTP 端口。 |
-| SMTP | `smtp_security` | `ssl` | `ssl`、`starttls` 或 `plain`。 |
-| SMTP | `allow_plain_smtp` | `false` | 仅明确开启后才允许 `plain`。 |
-| SMTP | `smtp_username` | 空 | SMTP 登录账号。 |
-| SMTP | `smtp_password` | 空 | SMTP 授权码。 |
-| SMTP | `sender_address` | 空 | 邮件 From 地址。 |
-| SMTP | `sender_name` | `AstrBot MailRelay Guard` | From 显示名称。 |
-| SMTP | `smtp_timeout_seconds` | `20` | SMTP 超时秒数，范围 5-120。 |
-| 收件人 | `require_recipient_allowlist` | `true` | 是否强制精确地址/域名白名单。 |
-| 收件人 | `recipient_allowlist` | `[]` | 完整允许地址列表。 |
-| 收件人 | `allowed_recipient_domains` | `[]` | 允许域名列表。 |
-| 限制 | `max_recipients_per_message` | `3` | 单封邮件的收件人数上限。 |
-| 限制 | `max_subject_chars` | `120` | 邮件主题字符上限。 |
-| 限制 | `max_body_chars` | `5000` | 纯文本正文字符上限。 |
-| 限制 | `max_messages_per_hour` | `10` | 每小时成功投递上限。 |
-| 测试 | `test_recipient` | 空 | 默认测试信收件人。 |
-| 权限 | `command_allowed_sender_ids` | `[]` | 被允许控制插件的管理员 sender ID。 |
-| 审计 | `audit_log_enabled` | `true` | 是否写入最小化 JSONL 审计。 |
-| 审计 | `audit_max_file_kb` | `512` | 当前审计文件大小上限，达到后轮换一份 previous 文件。 |
-| LLM | `enable_llm_draft_tool` | `false` | 是否注册仅起草、不发送的 LLM 工具。 |
-| LLM | `llm_tool_allowed_sender_ids` | `[]` | 允许 LLM 起草的管理员 sender ID。 |
-| LLM | `draft_ttl_seconds` | `600` | 内存草稿有效期，范围 60-3600 秒。 |
-| LLM | `max_pending_drafts_per_actor` | `3` | 每用户、每会话的待确认草稿上限。 |
+| Notify the owner | `mailrelay_notify_owner` | Fixed `owner_email` | A sender listed in `owner_sender_ids` **and** recognized as an AstrBot admin |
+| Send to myself | `mailrelay_send_to_self` | Only the current sender's resolved mailbox | Any user with a resolvable or verified mailbox, in a private chat by default |
+| Send to another person | `mailrelay_send_to_recipient` | The administrator-supplied address | A sender listed in `admin_sender_ids` **and** recognized as an AstrBot admin |
 
-所有配置项在 `_conf_schema.json` 中都有默认值。更新配置后请重载插件，特别是 `enable_llm_draft_tool` 与允许 ID 列表，因为 LLM 工具会在初始化阶段注册。
+This is the intended behavior:
 
-## 审计与隐私
+- Alice can directly email the configured owner without a draft confirmation.
+- A normal user can ask Alice to email that user, but cannot choose a recipient.
+  Self delivery defaults to private chats; group delivery is an explicit opt-in.
+- Only a configured administrator can ask Alice to email anyone else.
 
-审计文件位于 AstrBot 的插件数据目录，通常类似：
+The same rules apply to slash commands and LLM tools. Dashboard command
+permissions are treated as a convenience layer, not the security boundary.
+
+## Upgrading From v1.0
+
+v1.1 replaces the old draft-and-confirm design. The legacy draft commands and
+settings are intentionally removed; no draft token is needed for the new direct
+tools. After upgrading, open the plugin configuration and set
+`owner_email`, `owner_sender_ids`, and `admin_sender_ids` before enabling real
+delivery. Existing SMTP credentials can stay in place, but the old recipient
+allowlist keys are now replaced by the administrator-only recipient policy
+settings.
+
+## Quick Start: NetEase 163
+
+The defaults already target NetEase 163 SMTP:
+
+| Setting | Default |
+| --- | --- |
+| `smtp_host` | `smtp.163.com` |
+| `smtp_port` | `465` |
+| `smtp_security` | `ssl` |
+
+You must replace the following public placeholders in the AstrBot plugin
+configuration:
+
+| Setting | What to enter |
+| --- | --- |
+| `smtp_username` | Your **real NetEase mailbox address**, for example `alice@163.com` |
+| `smtp_password` | The SMTP client authorization code generated by NetEase Mail, not the web-login password |
+| `sender_address` | Usually the same address as `smtp_username` |
+| `owner_email` | The mailbox that should receive Alice's owner notifications |
+| `owner_sender_ids` | Your owner identity from `/mailrelay_whoami` |
+| `admin_sender_ids` | Every administrator identity allowed to send to other recipients |
+
+`SMTP ????` means the actual email address used to log in to SMTP. For a
+163 mailbox, it is normally the complete address such as `alice@163.com`.
+The password field must use the NetEase SMTP authorization code.
+
+Then:
+
+1. Enable SMTP in NetEase Mail and generate a client authorization code.
+2. Fill the values above in AstrBot's plugin configuration.
+3. Send `/mailrelay_whoami` from your QQ account.
+4. Copy the shown `platform_id:sender_id` into both `owner_sender_ids` and
+   `admin_sender_ids` when that account should own and administer the plugin.
+5. Ensure the same account is configured as an AstrBot administrator.
+6. Reload the plugin, then run `/mailrelay_smtp_test`.
+7. Run `/mailrelay_send_test` to send one fixed test message to `owner_email`.
+
+Do not put the authorization code in screenshots, chat history, or a public
+repository.
+
+## QQ And NapCat Mailboxes
+
+No NapCat base URL is required. MailRelay Guard uses the existing AstrBot
+OneBot/NapCat event connection; the usual AstrBot platform name is
+`aiocqhttp`, which is the default in `qq_platform_names`.
+
+QQ email is not a standard OneBot message field. MailRelay Guard therefore
+tries only privacy-aware, feature-detected paths for the **current sender**:
+
+1. An exact administrator-configured mapping in `self_email_overrides`.
+2. The sender's previously verified binding.
+3. NapCat `get_stranger_info` when it happens to expose `email` or `eMail`.
+4. An opt-in NapCat friend-list fallback, matched only to the current sender.
+5. Optional QQ-number mailbox derivation, only when you explicitly enable it.
+
+NapCat and QQ do not guarantee that steps 3 or 4 return an address. This can
+depend on NapCat version, friendship, profile privacy, and whether the user has
+an address at all. The plugin does not claim otherwise and never guesses an
+address by default.
+
+`allow_qq_mailbox_derivation` defaults to `false`. If you enable it, a purely
+numeric QQ id on a configured QQ platform becomes `QQ?@qq.com`. That is a
+derivation, not a profile lookup, and it does not prove the mailbox is active.
+
+### Fallback Binding
+
+When Alice cannot resolve a user's mailbox, the user can bind one in a private
+chat:
 
 ```text
-data/plugin_data/astrbot_plugin_mailrelay_guard/mailrelay_guard_audit.jsonl
+/mailrelay_bind user@example.com
+/mailrelay_verify 123456
 ```
 
-它只记录投递结果、操作类别、发送者短指纹、收件人数、收件人域名和简短技术状态。它不会记录 SMTP 授权码、完整收件人地址、主题或正文。请继续将 AstrBot 数据目录视为敏感数据，并按照自己的备份与访问控制规则管理它。
+The plugin sends a one-time code first. It stores the address only after the
+same platform-scoped sender returns the correct code. A user can delete the
+binding at any time:
 
-## 常见问题
+```text
+/mailrelay_unbind
+```
 
-**`SMTP 登录失败`**
+Bindings and verification commands require a private chat by default, so a
+user does not post an email address or code in a group. The `mailrelay_identity`
+command reports only whether a mailbox is available and its source; it does not
+print the address in chat.
 
-确认 163 邮箱已开启 SMTP 服务，`smtp_username` 是完整邮箱地址，`smtp_password` 是客户端授权码而非网页登录密码。
+## LLM Tools
 
-**`该收件人不在允许范围内`**
+Enable `enable_llm_mail_tools` to register all three tools below. It defaults
+to `true`; reload the plugin after changing it.
 
-将完整地址加入 `recipient_allowlist`，或谨慎将其域名加入 `allowed_recipient_domains`，然后重载插件。
+### `mailrelay_notify_owner`
 
-**`当前发送者不在 command_allowed_sender_ids 中`**
+```json
+{"subject":"Task complete","body":"Alice has finished the scheduled task."}
+```
 
-先执行 `/mailrelay_whoami`，将该命令返回的 `sender_id` 添加到配置，同时确认它在 AstrBot 中具有管理员身份。
+The recipient is always `owner_email`. The tool takes no recipient parameter.
+It is direct delivery, but only the configured owner identity with AstrBot admin
+status can cause it to send.
 
-**启用了 LLM 草稿工具但模型看不到它**
+### `mailrelay_send_to_self`
 
-检查 `enable_llm_draft_tool=true`、`llm_tool_allowed_sender_ids` 非空并包含当前管理员 ID，然后重载插件。该工具不会直接发送邮件，仍须执行确认命令。
+```json
+{"subject":"Your requested summary","body":"Here is the summary you asked Alice to mail."}
+```
 
-## 设计与致谢
+The tool takes no recipient parameter. Alice can send only to the mailbox
+resolved from the current event sender. Giving Alice another person's email in
+the conversation does not change the destination. Self delivery is limited to
+private chats by default; set `require_private_chat_for_self_delivery` to
+`false` only when group self-delivery is an intentional choice.
 
-MailRelay Guard 的产品方向受 [Chris95743/astrbot_plugin_email_tool](https://github.com/Chris95743/astrbot_plugin_email_tool) 启发，感谢上游作者对 AstrBot SMTP 邮件能力的探索。
+### `mailrelay_send_to_recipient`
 
-本项目从零独立实现，没有复制上游的源代码、模板、图片或 README 表达；上游项目采用 AGPL-3.0，本项目采用 MIT。这里的致谢不改变上游项目的许可证，也不替代上游仓库的许可声明。
+```json
+{
+  "recipients":"person@example.com",
+  "subject":"Administrator notice",
+  "body":"This message was requested by a configured administrator."
+}
+```
 
-相较于直接把 SMTP 发送暴露给 LLM，本项目将默认行为收紧为：空白名单拒绝、管理员二次鉴权、明确确认草稿、成功后计数的原子限流、SMTP 超时和不含邮件内容的审计。它不包含上游的 NapCat/内存监控功能，以保持邮件外发边界清晰。
+This is the only tool with a recipient parameter. It directly sends after the
+administrator and allowlist checks succeed. Turn on
+`restrict_admin_other_recipients` to require
+`admin_other_recipient_allowlist` or `admin_other_allowed_domains` as an
+additional recipient restriction.
 
-## 发布说明
+## Slash Commands
 
-项目仓库：[Whereis-Alice/astrbot_plugin_mailrelay_guard](https://github.com/Whereis-Alice/astrbot_plugin_mailrelay_guard)。发布新版本时，请同步更新 `metadata.yaml`、`CHANGELOG.md` 与本 README 中的版本说明。
+| Command | Permission | Description |
+| --- | --- | --- |
+| `/mailrelay_whoami` | Everyone | Shows platform-scoped identity for configuration. |
+| `/mailrelay_identity` | Everyone | Shows whether the caller has a usable self mailbox, without revealing it. |
+| `/mailrelay_bind email@example.com` | Everyone, private chat by default | Emails a binding verification code. |
+| `/mailrelay_verify 123456` | Everyone, private chat by default | Saves the verified self mailbox. |
+| `/mailrelay_unbind` | Everyone, private chat by default | Deletes the caller's saved binding. |
+| `/mailrelay_self subject \| body` | Everyone with a resolved mailbox, private chat by default | Sends only to the caller's own mailbox. |
+| `/mailrelay_owner subject \| body` | Configured owner + AstrBot admin | Sends only to `owner_email`. |
+| `/mailrelay_send recipient \| subject \| body` | Configured admin + AstrBot admin | Sends to explicitly specified recipient(s). |
+| `/mailrelay_status` | Configured admin + AstrBot admin | Shows redacted configuration and limits. |
+| `/mailrelay_smtp_test` | Configured admin + AstrBot admin | Tests TLS and SMTP login without delivery. |
+| `/mailrelay_send_test` | Configured owner + AstrBot admin | Sends a fixed test message to `owner_email`. |
 
-## 许可证
+Examples:
 
-[MIT License](LICENSE)。变更记录见 [CHANGELOG.md](CHANGELOG.md)。
+```text
+/mailrelay_self Your summary | Alice has prepared the requested summary.
+/mailrelay_owner Service alert | The scheduled backup has completed.
+/mailrelay_send colleague@example.com | Review request | Please review the attached discussion in chat.
+```
+
+The plugin sends plain-text email only. It does not implement HTML, attachments,
+CC, or BCC. This keeps the delivery surface clear and avoids turning a public
+chat tool into an uncontrolled bulk-mail channel.
+
+## Important Configuration Groups
+
+Every configuration item has a default in `_conf_schema.json`. The dashboard is
+the authoritative full list; these are the settings most likely to need
+attention.
+
+| Group | Settings | Notes |
+| --- | --- | --- |
+| SMTP | `smtp_host`, `smtp_port`, `smtp_security`, `smtp_username`, `smtp_password`, `sender_address` | NetEase 163 SSL values are prefilled; credentials are placeholders until you replace them. |
+| Owner/Admin | `owner_email`, `owner_sender_ids`, `admin_sender_ids` | Use the full `platform_id:sender_id` from `/mailrelay_whoami` to avoid cross-platform id collisions. |
+| Direct tools | `enable_llm_mail_tools`, `enable_owner_delivery`, `enable_self_delivery`, `enable_admin_other_delivery`, `require_private_chat_for_self_delivery` | All direct tools enforce their own mode checks in code; self delivery is private-chat-only until you explicitly opt into groups. |
+| QQ/NapCat | `napcat_email_lookup_enabled`, `napcat_friend_list_fallback_enabled`, `qq_platform_names` | No URL is configured here because AstrBot already owns the OneBot/NapCat connection. Friend-list fallback is opt-in. |
+| Self mailbox | `self_email_overrides`, `self_binding_enabled`, `verification_code_ttl_seconds`, `verification_resend_seconds`, `verification_max_attempts` | Overrides use `platform_id:sender_id=email@example.com`; bindings are verified by an attempt-limited email code. |
+| Optional derivation | `allow_qq_mailbox_derivation`, `qq_mail_domain` | Off by default because QQ number to mailbox is not verified profile data. |
+| Admin recipient policy | `restrict_admin_other_recipients`, `admin_other_recipient_allowlist`, `admin_other_allowed_domains` | Optional additional restriction for the administrator-only third-party mode. |
+| Limits | `max_messages_per_hour`, `max_successful_messages_per_actor_per_hour`, `max_delivery_attempts_per_actor_per_hour`, `actor_min_send_interval_seconds` | Failed SMTP attempts count toward the per-user attempt limit. |
+| Privacy | `audit_log_enabled`, `audit_max_file_kb` | Audit records omit message content, authorization codes, and full mailbox addresses. |
+
+## Privacy And Safety
+
+- The server-side recipient mode is rechecked immediately before SMTP delivery.
+- A normal user has no tool or command path that accepts another person's
+  recipient address.
+- QQ/NapCat profile lookups target only the current caller. A friend-list
+  fallback is scanned in memory and the full list is neither cached, logged,
+  nor exposed to Alice.
+- Verified self-mailbox bindings are stored locally under the AstrBot plugin
+  data directory. Pending codes are kept only as hashes in memory and disappear
+  on plugin reload.
+- Audit logs record an actor fingerprint, delivery mode/result, recipient count,
+  and recipient domains. They do not contain message text, subject, SMTP secret,
+  or full email addresses.
+- Delivery uses TLS by default. Plain SMTP is blocked unless
+  `allow_plain_smtp` is explicitly enabled.
+- Global success limits, per-user success limits, per-user failure-inclusive
+  attempt limits, and a per-user cooldown reduce accidental and abusive sends.
+
+## Troubleshooting
+
+### SMTP login fails
+
+For a NetEase mailbox, confirm SMTP is enabled and `smtp_password` is a client
+authorization code. `smtp_username` and `sender_address` should normally be
+the same real mailbox address.
+
+### A user cannot send email to themselves
+
+Ask the user to run `/mailrelay_identity`. If NapCat did not provide a usable
+profile address, the user should privately run `/mailrelay_bind` and
+`/mailrelay_verify`. Do not enable QQ-number derivation unless that fallback is
+acceptable for your deployment.
+
+### An administrator cannot send to another person
+
+The account must pass both checks: AstrBot must identify it as an administrator,
+and its exact `platform_id:sender_id` must be in `admin_sender_ids`. If
+`restrict_admin_other_recipients` is enabled, the destination must also match
+one of the configured recipient allowlists.
+
+### The owner tool is denied
+
+The caller must be an AstrBot admin and appear in `owner_sender_ids`; `admin_sender_ids`
+alone does not grant owner-notification authority. Check the exact value from
+`/mailrelay_whoami` and reload after changing configuration.
+
+### Do I need a separate NapCat configuration?
+
+No. MailRelay Guard does not open another NapCat HTTP connection or need a
+NapCat base URL. When AstrBot is already receiving an `aiocqhttp` event, the
+plugin feature-detects that event's existing adapter connection. QQ email data
+may still be unavailable, which is why verified binding exists.
+
+## Development Checks
+
+The project has no additional PyPI runtime dependency. AstrBot provides the
+plugin API; SMTP/TLS and email MIME construction use Python's standard library.
+
+```text
+python -m ruff check astrbot_plugin_mailrelay_guard
+python -m unittest discover -s astrbot_plugin_mailrelay_guard/tests -t . -v
+```
+
+## Upstream Acknowledgement
+
+MailRelay Guard was independently written after studying the AstrBot SMTP use
+case explored by [Chris95743/astrbot_plugin_email_tool](https://github.com/Chris95743/astrbot_plugin_email_tool).
+Thank you to the upstream author for publishing that work.
+
+This project does not include upstream source code, templates, images, or
+documentation text. The upstream project is AGPL-3.0; MailRelay Guard is
+licensed under MIT, and this acknowledgement does not alter either license.
+
+## License
+
+[MIT License](LICENSE). See [CHANGELOG.md](CHANGELOG.md) for release notes.
