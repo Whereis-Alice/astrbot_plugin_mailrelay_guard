@@ -25,6 +25,7 @@ from .mailrelay_guard.config import (
     is_placeholder_address,
     load_settings,
 )
+from .mailrelay_guard.html_sanitizer import prepare_html_mail
 from .mailrelay_guard.identity import (
     ActorIdentity,
     SelfMailboxResolver,
@@ -46,9 +47,10 @@ from .mailrelay_guard.rate_limit import (
 from .mailrelay_guard.smtp_client import MailRelayTransportError, SMTPMailRelayClient
 
 PLUGIN_ID = "astrbot_plugin_mailrelay_guard"
-PLUGIN_VERSION = "v1.1.2"
+PLUGIN_VERSION = "v1.2.0"
 ONE_HOUR_SECONDS = 60 * 60
 RecipientMode = Literal["owner", "self", "other", "binding"]
+MailContentFormat = Literal["plain", "html"]
 
 
 def _tool_event(context: ContextWrapper[AstrAgentContext]) -> AstrMessageEvent | None:
@@ -170,6 +172,134 @@ class MailRelaySendToRecipientTool(FunctionTool[AstrAgentContext]):
         )
 
 
+@pydantic_dataclass
+class MailRelayNotifyOwnerHtmlTool(FunctionTool[AstrAgentContext]):
+    """Directly notify the configured owner with a sanitized HTML email."""
+
+    plugin: Any = Field(default=None, repr=False)
+    name: str = "mailrelay_notify_owner_html"
+    description: str = (
+        "向配置中的主人固定邮箱发送 HTML 模板邮件。请提供完整 HTML 片段并使用内联 "
+        "CSS。插件会在 SMTP 投递前清洗 HTML，并自动生成纯文本备用内容。收件人由 "
+        "配置固定，不能修改；仅配置的主人且为 AstrBot 管理员时可调用。"
+    )
+    parameters: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "subject": {"type": "string", "description": "邮件主题。"},
+                "html_body": {
+                    "type": "string",
+                    "description": "完整 HTML 邮件正文。使用内联 CSS，不要使用脚本、表单或外链资源。",
+                },
+            },
+            "required": ["subject", "html_body"],
+            "additionalProperties": False,
+        }
+    )
+
+    async def call(
+        self, context: ContextWrapper[AstrAgentContext], **kwargs: Any
+    ) -> str:
+        if self.plugin is None:
+            return "MailRelay Guard 当前不可用。"
+        return await self.plugin.deliver_from_tool(
+            event=_tool_event(context),
+            mode="owner",
+            subject=str(kwargs.get("subject", "")),
+            body="",
+            html_body=str(kwargs.get("html_body", "")),
+            content_format="html",
+        )
+
+
+@pydantic_dataclass
+class MailRelaySendHtmlToSelfTool(FunctionTool[AstrAgentContext]):
+    """Send a sanitized HTML email only to the current sender's mailbox."""
+
+    plugin: Any = Field(default=None, repr=False)
+    name: str = "mailrelay_send_html_to_self"
+    description: str = (
+        "仅向当前聊天发送者已解析或已验证绑定的邮箱发送 HTML 模板邮件。请提供完整 "
+        "HTML 片段并使用内联 CSS。插件会在投递前清洗 HTML 并生成纯文本备用内容。"
+        "此工具没有收件人参数，绝不能用于向他人发送。"
+    )
+    parameters: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "subject": {"type": "string", "description": "邮件主题。"},
+                "html_body": {
+                    "type": "string",
+                    "description": "完整 HTML 邮件正文。使用内联 CSS，不要使用脚本、表单或外链资源。",
+                },
+            },
+            "required": ["subject", "html_body"],
+            "additionalProperties": False,
+        }
+    )
+
+    async def call(
+        self, context: ContextWrapper[AstrAgentContext], **kwargs: Any
+    ) -> str:
+        if self.plugin is None:
+            return "MailRelay Guard 当前不可用。"
+        return await self.plugin.deliver_from_tool(
+            event=_tool_event(context),
+            mode="self",
+            subject=str(kwargs.get("subject", "")),
+            body="",
+            html_body=str(kwargs.get("html_body", "")),
+            content_format="html",
+        )
+
+
+@pydantic_dataclass
+class MailRelaySendHtmlToRecipientTool(FunctionTool[AstrAgentContext]):
+    """Administrator-only sanitized HTML delivery to explicit recipients."""
+
+    plugin: Any = Field(default=None, repr=False)
+    name: str = "mailrelay_send_html_to_recipient"
+    description: str = (
+        "向明确指定的收件人发送 HTML 模板邮件。仅供同时在 admin_sender_ids 中且为 "
+        "AstrBot 管理员的当前发送者使用。插件会在投递前清洗 HTML 并生成纯文本备用 "
+        "内容；普通用户应使用 mailrelay_send_html_to_self。"
+    )
+    parameters: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "recipients": {
+                    "type": "string",
+                    "description": "一个或多个收件邮箱地址，多个地址以逗号分隔。",
+                },
+                "subject": {"type": "string", "description": "邮件主题。"},
+                "html_body": {
+                    "type": "string",
+                    "description": "完整 HTML 邮件正文。使用内联 CSS，不要使用脚本、表单或外链资源。",
+                },
+            },
+            "required": ["recipients", "subject", "html_body"],
+            "additionalProperties": False,
+        }
+    )
+
+    async def call(
+        self, context: ContextWrapper[AstrAgentContext], **kwargs: Any
+    ) -> str:
+        if self.plugin is None:
+            return "MailRelay Guard 当前不可用。"
+        return await self.plugin.deliver_from_tool(
+            event=_tool_event(context),
+            mode="other",
+            recipients_input=str(kwargs.get("recipients", "")),
+            subject=str(kwargs.get("subject", "")),
+            body="",
+            html_body=str(kwargs.get("html_body", "")),
+            content_format="html",
+        )
+
+
 class MailRelayGuardPlugin(Star):
     """Direct SMTP delivery with recipient modes enforced at the final boundary."""
 
@@ -195,6 +325,7 @@ class MailRelayGuardPlugin(Star):
         self._mailboxes: MailboxBindingStore | None = None
         self._mailbox_resolver = SelfMailboxResolver(None)
         self._llm_tools_registered = False
+        self._html_tools_registered = False
 
     async def initialize(self) -> None:
         """Prepare private storage and register the direct, mode-scoped LLM tools."""
@@ -218,14 +349,22 @@ class MailRelayGuardPlugin(Star):
                 MailRelaySendToRecipientTool(plugin=self),
             )
             self._llm_tools_registered = True
+            if settings.enable_html_mail:
+                self.context.add_llm_tools(
+                    MailRelayNotifyOwnerHtmlTool(plugin=self),
+                    MailRelaySendHtmlToSelfTool(plugin=self),
+                    MailRelaySendHtmlToRecipientTool(plugin=self),
+                )
+                self._html_tools_registered = True
 
         logger.info(
-            "[%s] initialized | smtp=%s:%s security=%s direct_tools=%s",
+            "[%s] initialized | smtp=%s:%s security=%s direct_tools=%s html_tools=%s",
             PLUGIN_ID,
             settings.smtp_host or "(unset)",
             settings.smtp_port,
             settings.smtp_security,
             self._llm_tools_registered,
+            self._html_tools_registered,
         )
 
     async def terminate(self) -> None:
@@ -451,6 +590,8 @@ class MailRelayGuardPlugin(Star):
         body: str,
         recipients_input: str = "",
         action: str | None = None,
+        html_body: str | None = None,
+        content_format: MailContentFormat = "plain",
     ) -> str:
         """The shared final boundary for LLM tools and interactive commands."""
 
@@ -461,6 +602,17 @@ class MailRelayGuardPlugin(Star):
         if actor is None:
             return "邮件未发送：无法读取当前平台和发送者 ID。"
         actual_action = action or f"llm_{mode}"
+        if content_format not in {"plain", "html"}:
+            return "邮件未发送：不支持的邮件内容格式。"
+        if content_format == "html" and not settings.enable_html_mail:
+            await self._audit(
+                settings,
+                action=actual_action,
+                outcome="blocked",
+                actor=actor,
+                detail="html_disabled",
+            )
+            return "邮件未发送：管理员尚未开启 HTML 邮件功能。"
         denied = self._authorization_denial(event, actor, settings, mode)
         if denied:
             await self._audit(
@@ -484,15 +636,16 @@ class MailRelayGuardPlugin(Star):
                 mode=mode,
                 recipients_input=recipients_input,
             )
-            validate_dispatch_request(
-                settings,
-                recipients,
-                subject,
-                body,
-                enforce_recipient_policy=(
-                    mode == "other" and settings.restrict_admin_other_recipients
-                ),
-            )
+            if content_format == "plain":
+                validate_dispatch_request(
+                    settings,
+                    recipients,
+                    subject,
+                    body,
+                    enforce_recipient_policy=(
+                        mode == "other" and settings.restrict_admin_other_recipients
+                    ),
+                )
         except MailRelayValidationError as exc:
             await self._audit(
                 settings,
@@ -512,6 +665,7 @@ class MailRelayGuardPlugin(Star):
             subject=subject.strip(),
             body=body.strip(),
             action=actual_action,
+            html_body=html_body if content_format == "html" else None,
         )
 
     async def request_mailbox_binding(
@@ -714,10 +868,26 @@ class MailRelayGuardPlugin(Star):
         body: str,
         action: str,
         expose_recipient: bool = False,
+        html_body: str | None = None,
     ) -> str:
         problems = configuration_problems(settings)
         if problems:
             return self._format_configuration_problem("邮件未发送", problems)
+        if html_body is not None:
+            try:
+                prepared_html = prepare_html_mail(settings, html_body)
+            except MailRelayValidationError as exc:
+                await self._audit(
+                    settings,
+                    action=action,
+                    outcome="blocked",
+                    actor=actor,
+                    recipients=recipients,
+                    detail=type(exc).__name__,
+                )
+                return f"邮件未发送：{exc}"
+            body = prepared_html.plain_body
+            html_body = prepared_html.html_body
         try:
             validate_dispatch_request(
                 settings,
@@ -726,6 +896,9 @@ class MailRelayGuardPlugin(Star):
                 body,
                 enforce_recipient_policy=(
                     mode == "other" and settings.restrict_admin_other_recipients
+                ),
+                body_max_chars=(
+                    settings.max_html_body_chars if html_body is not None else None
                 ),
             )
         except MailRelayValidationError as exc:
@@ -743,6 +916,7 @@ class MailRelayGuardPlugin(Star):
                 subject=subject,
                 body=body,
                 action=action,
+                html_body=html_body,
             )
         if succeeded and expose_recipient:
             return response
@@ -759,6 +933,7 @@ class MailRelayGuardPlugin(Star):
         subject: str,
         body: str,
         action: str,
+        html_body: str | None = None,
     ) -> tuple[bool, str]:
         if not self._global_success_limiter.can_send(
             max_messages=settings.max_messages_per_hour,
@@ -837,7 +1012,21 @@ class MailRelayGuardPlugin(Star):
         # Attempts are charged before SMTP so failed logins cannot be hammered forever.
         self._actor_attempt_limiter.record(actor.key)
         try:
-            result = await self._smtp_client.send(settings, recipients, subject, body)
+            if html_body is None:
+                result = await self._smtp_client.send(
+                    settings,
+                    recipients,
+                    subject,
+                    body,
+                )
+            else:
+                result = await self._smtp_client.send(
+                    settings,
+                    recipients,
+                    subject,
+                    body,
+                    html_body=html_body,
+                )
         except MailRelayTransportError as exc:
             await self._audit(
                 settings,
@@ -862,7 +1051,8 @@ class MailRelayGuardPlugin(Star):
             actor=actor,
             recipients=recipients,
             detail=(
-                f"mode={mode};accepted={accepted_count};"
+                f"mode={mode};format={'html' if html_body is not None else 'plain'};"
+                f"accepted={accepted_count};"
                 f"refused={len(result.refused_recipients)}"
             ),
         )
@@ -916,6 +1106,9 @@ class MailRelayGuardPlugin(Star):
             f"- 主人收件地址：{_mask_email(settings.owner_email)}",
             f"- 授权码：{'已填写' if settings.smtp_password and not settings.smtp_password.startswith('YOUR_') else '未填写'}",
             f"- LLM 直发工具：{'已注册' if self._llm_tools_registered else '未注册'}",
+            f"- HTML 模板邮件：{'开启' if settings.enable_html_mail else '关闭'}",
+            f"- HTML 邮件工具：{'已注册' if self._html_tools_registered else '未注册'}",
+            f"- HTML 严格清洗：{'开启' if settings.sanitize_html_before_send else '关闭'}",
             f"- 自助发给自己：{'开启' if settings.enable_self_delivery else '关闭'}",
             f"- 管理员代发：{'开启' if settings.enable_admin_other_delivery else '关闭'}",
             f"- 管理员代发白名单：{'开启' if settings.restrict_admin_other_recipients else '关闭'}",

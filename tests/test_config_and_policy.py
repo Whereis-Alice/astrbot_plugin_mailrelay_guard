@@ -46,6 +46,12 @@ class ConfigAndPolicyTests(unittest.TestCase):
         self.assertEqual(settings.smtp_security, "ssl")
         self.assertTrue(settings.enable_llm_mail_tools)
         self.assertTrue(settings.enable_self_delivery)
+        self.assertFalse(settings.enable_html_mail)
+        self.assertTrue(settings.sanitize_html_before_send)
+        self.assertFalse(settings.html_allow_links)
+        self.assertFalse(settings.html_allow_remote_images)
+        self.assertEqual(settings.html_remote_image_allowed_domains, frozenset())
+        self.assertEqual(settings.max_html_body_chars, 30000)
         self.assertEqual(settings.smtp_password, DEFAULT_PLACEHOLDER_PASSWORD)
         problems = " ".join(configuration_problems(settings))
         self.assertIn("smtp_username", problems)
@@ -68,6 +74,10 @@ class ConfigAndPolicyTests(unittest.TestCase):
                 "require_private_chat_for_self_delivery": "私聊",
                 "restrict_admin_other_recipients": "不限制",
                 "audit_log_enabled": "日志",
+                "enable_html_mail": "HTML",
+                "sanitize_html_before_send": "清洗",
+                "html_allow_links": "链接",
+                "html_allow_remote_images": "图片",
             }
         )
 
@@ -77,6 +87,10 @@ class ConfigAndPolicyTests(unittest.TestCase):
         self.assertTrue(settings.require_private_chat_for_self_delivery)
         self.assertTrue(settings.restrict_admin_other_recipients)
         self.assertTrue(settings.audit_log_enabled)
+        self.assertFalse(settings.enable_html_mail)
+        self.assertTrue(settings.sanitize_html_before_send)
+        self.assertFalse(settings.html_allow_links)
+        self.assertFalse(settings.html_allow_remote_images)
 
     def test_null_boolean_values_use_conservative_settings(self) -> None:
         settings = load_settings(

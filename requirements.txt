@@ -1,2 +1,2 @@
-# No additional PyPI dependencies are required.
-# AstrBot supplies the plugin API and Pydantic; SMTP/TLS use Python's standard library.
+nh3>=0.3.6,<0.4
+tinycss2>=1.2,<2

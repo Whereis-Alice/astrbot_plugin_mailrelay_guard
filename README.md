@@ -8,13 +8,13 @@ MailRelay Guard 是为 Alice 一类 AstrBot 助手准备的 SMTP 邮件插件。
 
 ## 功能与权限
 
-本插件提供三种彼此独立的 LLM 工具。每种工具的参数和服务端权限校验都不同，普通用户无法把“发给自己”的请求变成向第三方投递。
+本插件提供三条彼此独立的 LLM 收件人权限路径。纯文本工具默认可用；开启 `enable_html_mail` 后，每条路径还会获得对应的 HTML 模板工具。每种工具的参数和服务端权限校验都不同，普通用户无法把“发给自己”的请求变成向第三方投递。
 
 | 使用场景 | LLM 工具 | 实际收件人 | 可使用者 |
 | --- | --- | --- | --- |
-| 通知主人 | `mailrelay_notify_owner` | 固定的 `owner_email` | 同时位于 `owner_sender_ids` 且被 AstrBot 识别为管理员的账号 |
-| 发给自己 | `mailrelay_send_to_self` | 当前发送者已解析或已验证绑定的邮箱 | 拥有可用邮箱的用户，默认仅限私聊 |
-| 发给他人 | `mailrelay_send_to_recipient` | 管理员在参数中指定的邮箱 | 同时位于 `admin_sender_ids` 且被 AstrBot 识别为管理员的账号 |
+| 通知主人 | `mailrelay_notify_owner`；HTML：`mailrelay_notify_owner_html` | 固定的 `owner_email` | 同时位于 `owner_sender_ids` 且被 AstrBot 识别为管理员的账号 |
+| 发给自己 | `mailrelay_send_to_self`；HTML：`mailrelay_send_html_to_self` | 当前发送者已解析或已验证绑定的邮箱 | 拥有可用邮箱的用户，默认仅限私聊 |
+| 发给他人 | `mailrelay_send_to_recipient`；HTML：`mailrelay_send_html_to_recipient` | 管理员在参数中指定的邮箱 | 同时位于 `admin_sender_ids` 且被 AstrBot 识别为管理员的账号 |
 
 设计目标如下：
 
@@ -32,6 +32,8 @@ v1.1 使用三种直接投递工具取代了旧版的草稿确认流程。旧的
 `v1.1.1` 还修正了测试邮件对示例主人邮箱的处理：没有填写真实 `owner_email` 时，`/mailrelay_send_test` 会拒绝发送，不会把邮件投递给示例地址。
 
 `v1.1.2` 进一步按拒绝优先的原则处理损坏配置：显式清空或写为 `null` 的 `smtp_host` 不会静默恢复为 `smtp.163.com`；无法识别或为 `null` 的敏感布尔开关也不会意外开启投递能力。
+
+`v1.2.0` 增加可配置清洗的 HTML 模板邮件。HTML 功能默认关闭，升级后不会改变现有纯文本工具的行为。
 
 ## 网易 163 快速配置
 
@@ -123,7 +125,7 @@ platform_id:sender_id=email@example.com
 
 ## LLM 工具
 
-保持 `enable_llm_mail_tools=true` 即可注册以下三个工具。修改后请重载插件。
+保持 `enable_llm_mail_tools=true` 即可注册以下三个纯文本工具。修改后请重载插件。
 
 ### `mailrelay_notify_owner`
 
@@ -153,6 +155,46 @@ platform_id:sender_id=email@example.com
 
 这是唯一带有收件人参数的工具。管理员身份和可选白名单都通过后会直接投递。将 `restrict_admin_other_recipients` 设为 `true` 后，收件人还必须匹配 `admin_other_recipient_allowlist` 或 `admin_other_allowed_domains`。
 
+### HTML 模板工具
+
+将 `enable_html_mail` 设为 `true` 并重载插件后，Alice 可以使用以下工具自由编写 HTML 模板：
+
+| 收件人模式 | HTML 工具 | 收件人规则 |
+| --- | --- | --- |
+| 通知主人 | `mailrelay_notify_owner_html` | 固定为 `owner_email`，需要主人身份与 AstrBot 管理员权限 |
+| 发给自己 | `mailrelay_send_html_to_self` | 只能投递给当前发送者已解析或已验证的邮箱 |
+| 发给他人 | `mailrelay_send_html_to_recipient` | 仅配置的 AstrBot 管理员可指定收件人，仍受代发白名单限制 |
+
+HTML 工具需要 `subject` 与 `html_body` 两个参数。`html_body` 是完整 HTML 片段，Alice 应使用内联 CSS。插件会在最终 SMTP 投递边界清洗内容，并从清洗后的 HTML 自动生成纯文本备用正文，因此不需要让模型额外维护两份正文。
+
+```json
+{
+  "subject": "霓虹任务通知",
+  "html_body": "<div style=\"background-color:#0b1020;border:1px solid #ff00aa;border-radius:12px;color:#f4f7ff;padding:24px;text-align:center\"><h1 style=\"color:#00f5ff\">任务完成</h1><p>爱丽丝已完成本次任务。</p></div>"
+}
+```
+
+HTML 邮件会以 `multipart/alternative` 格式同时发送 HTML 与纯文本版本。QQ、网易、Gmail、Outlook 等客户端会各自过滤部分 CSS，因此视觉效果可能不同。斜杠命令仍保持纯文本，避免在聊天中直接粘贴长 HTML；样式化邮件应由 Alice 的 HTML 工具发送。
+
+### HTML 清洗与外部资源
+
+推荐的最小配置如下：
+
+```json
+{
+  "enable_html_mail": true,
+  "sanitize_html_before_send": true,
+  "html_allow_links": false,
+  "html_allow_remote_images": false,
+  "html_remote_image_allowed_domains": [],
+  "max_html_body_chars": 30000
+}
+```
+
+严格清洗默认开启。它允许常用的邮件排版标签、表格和内联样式，例如颜色、边框、圆角、阴影、字号、间距和文本排版；会移除脚本、表单、`iframe`、SVG、事件属性、`javascript:`、`data:`、相对 URL、`<style>` 标签及 CSS 中的 `url()`、`expression()`、`var()` 等主动或外链内容。
+
+关闭 `sanitize_html_before_send` 只会放宽一部分无主动内容的布局样式，基础安全过滤始终存在，不能作为任意网页直通开关。`html_allow_links` 开启后仅保留绝对 HTTPS 链接。远程图片默认关闭；要保留图片，必须同时开启 `html_allow_remote_images`，并在 `html_remote_image_allowed_domains` 填写精确主机名，例如 `cdn.example.com`。空白名单不会保留任何远程图片。
+
 ## 斜杠命令
 
 | 命令 | 权限 | 说明 |
@@ -177,7 +219,7 @@ platform_id:sender_id=email@example.com
 /mailrelay_send colleague@example.com | 审阅请求 | 请查看聊天中提到的内容。
 ```
 
-插件只发送纯文本邮件，不提供 HTML、附件、抄送或密送。这能让公共聊天中的邮件能力保持清晰，也避免它变成不受控制的群发渠道。
+默认只启用纯文本邮件。开启 HTML 功能后，插件只增加受清洗的 HTML 模板邮件，不提供附件、抄送或密送。这让 Alice 可以自由设计邮件视觉，同时不会把公共聊天能力变成不受控制的网页或群发渠道。
 
 ## 重要配置项
 
@@ -192,6 +234,7 @@ platform_id:sender_id=email@example.com
 | 自助邮箱 | `self_email_overrides`、`self_binding_enabled`、`verification_code_ttl_seconds`、`verification_resend_seconds`、`verification_max_attempts` | 映射格式为 `platform_id:sender_id=email@example.com`。绑定验证码有次数限制。 |
 | QQ 号推导 | `allow_qq_mailbox_derivation`、`qq_mail_domain` | 默认关闭，因为 QQ 号推导不是已验证的资料邮箱。 |
 | 管理员收件人策略 | `restrict_admin_other_recipients`、`admin_other_recipient_allowlist`、`admin_other_allowed_domains` | 对管理员第三方投递增加可选白名单限制。 |
+| HTML 模板 | `enable_html_mail`、`sanitize_html_before_send`、`html_allow_links`、`html_allow_remote_images`、`html_remote_image_allowed_domains`、`max_html_body_chars` | HTML 默认关闭且严格清洗。远程图片必须同时开启开关并配置精确域名白名单。 |
 | 限制 | `max_messages_per_hour`、`max_successful_messages_per_actor_per_hour`、`max_delivery_attempts_per_actor_per_hour`、`actor_min_send_interval_seconds` | SMTP 失败也会计入单用户尝试上限。 |
 | 隐私 | `audit_log_enabled`、`audit_max_file_kb` | 审计不会记录邮件正文、授权码或完整邮箱地址。 |
 
@@ -199,9 +242,11 @@ platform_id:sender_id=email@example.com
 
 - 在 SMTP 投递前会再次执行服务端收件人模式校验。
 - 普通用户没有能填写第三方收件人地址的工具或命令路径。
+- HTML 工具沿用同一套主人、自助和管理员代发权限，清洗发生在最终 SMTP 投递边界，不仅发生在模型工具层。
+- HTML 只允许受支持的内联 CSS；脚本、表单、事件属性、危险协议、相对 URL、外链 CSS 和不在白名单内的远程图片会被移除。关闭严格清洗也不会关闭这条底线。
 - QQ/NapCat 资料查询只针对当前调用者。好友列表只在内存中用于匹配，不会整体缓存、记录或暴露给 Alice。
 - 已验证的自助邮箱保存在 AstrBot 的插件数据目录中。待验证的验证码仅以哈希形式保存在内存，重载插件后失效。
-- 审计日志只记录调用者指纹、投递模式与结果、收件人数及收件域名，不记录主题、正文、SMTP 密钥或完整邮箱。
+- 审计日志只记录调用者指纹、投递模式、邮件格式、结果、收件人数及收件域名，不记录主题、纯文本正文、HTML 模板、SMTP 密钥或完整邮箱。
 - 默认通过 TLS 投递。除非明确开启 `allow_plain_smtp`，否则明文 SMTP 会被阻止。
 - 全局成功投递上限、单用户成功上限、包含失败的单用户尝试上限和单用户冷却时间，可降低误发和滥用风险。
 
@@ -223,6 +268,10 @@ platform_id:sender_id=email@example.com
 
 调用者必须是 AstrBot 管理员，且必须位于 `owner_sender_ids`。仅放入 `admin_sender_ids` 不会获得主人通知权限。请从 `/mailrelay_whoami` 复制完整值，修改配置后重载插件。
 
+### HTML 样式没有显示或内容被删除
+
+先确认 `enable_html_mail` 已开启并已重载插件。默认严格清洗会移除脚本、`<style>` 标签、外链资源和不支持的 CSS，请让 Alice 使用内联 CSS。不同邮箱客户端也会自行过滤 CSS，因此应优先使用颜色、边框、圆角、阴影、字号、间距和表格布局。远程图片必须同时开启 `html_allow_remote_images` 并配置精确域名白名单。
+
 ### NapCat 需要额外配置
 
 不需要。MailRelay Guard 不会新建 NapCat HTTP 连接，也不需要 NapCat 基础 URL。当 AstrBot 已接收 `aiocqhttp` 事件时，插件会检测该事件所使用的适配器连接。QQ 邮箱资料仍可能不存在，因此提供了验证绑定作为回退方式。
@@ -233,7 +282,7 @@ platform_id:sender_id=email@example.com
 
 ## 开发检查
 
-项目没有额外的 PyPI 运行时依赖。AstrBot 提供插件 API，SMTP、TLS 和邮件 MIME 构造使用 Python 标准库。
+AstrBot 提供插件 API，SMTP、TLS 和邮件 MIME 构造使用 Python 标准库。HTML 清洗依赖 `nh3` 与 `tinycss2`，AstrBot 安装插件时会按 `requirements.txt` 安装它们。
 
 ```text
 python -m ruff check astrbot_plugin_mailrelay_guard

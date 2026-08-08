@@ -61,6 +61,12 @@ class MailRelaySettings:
     max_recipients_per_message: int
     max_subject_chars: int
     max_body_chars: int
+    enable_html_mail: bool
+    sanitize_html_before_send: bool
+    html_allow_links: bool
+    html_allow_remote_images: bool
+    html_remote_image_allowed_domains: frozenset[str]
+    max_html_body_chars: int
     max_messages_per_hour: int
     max_successful_messages_per_actor_per_hour: int
     max_delivery_attempts_per_actor_per_hour: int
@@ -235,6 +241,33 @@ def load_settings(config: Mapping[str, Any] | Any | None) -> MailRelaySettings:
             minimum=1,
             maximum=50000,
         ),
+        enable_html_mail=_as_bool(
+            _get(config, "enable_html_mail", False), False, invalid_default=False
+        ),
+        sanitize_html_before_send=_as_bool(
+            _get(config, "sanitize_html_before_send", True),
+            True,
+            invalid_default=True,
+        ),
+        html_allow_links=_as_bool(
+            _get(config, "html_allow_links", False), False, invalid_default=False
+        ),
+        html_allow_remote_images=_as_bool(
+            _get(config, "html_allow_remote_images", False),
+            False,
+            invalid_default=False,
+        ),
+        html_remote_image_allowed_domains=frozenset(
+            _normalize_hostnames(
+                _as_list(_get(config, "html_remote_image_allowed_domains", []))
+            )
+        ),
+        max_html_body_chars=_as_int(
+            _get(config, "max_html_body_chars", 30000),
+            30000,
+            minimum=1,
+            maximum=200000,
+        ),
         max_messages_per_hour=_as_int(
             _get(config, "max_messages_per_hour", 30),
             30,
@@ -390,6 +423,15 @@ def _normalize_domains(values: list[str]) -> list[str]:
         domain = value.strip().casefold().lstrip("@")
         if domain:
             normalized.append(domain)
+    return normalized
+
+
+def _normalize_hostnames(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for value in values:
+        hostname = value.strip().casefold().rstrip(".")
+        if hostname and "://" not in hostname and "/" not in hostname:
+            normalized.append(hostname)
     return normalized
 
 

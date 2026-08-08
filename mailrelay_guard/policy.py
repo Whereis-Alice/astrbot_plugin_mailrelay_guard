@@ -55,6 +55,7 @@ def validate_dispatch_request(
     body: str,
     *,
     enforce_recipient_policy: bool,
+    body_max_chars: int | None = None,
 ) -> None:
     """Validate content and, when requested, the admin-other allowlist."""
 
@@ -74,9 +75,10 @@ def validate_dispatch_request(
         )
     if not body.strip():
         raise MailRelayValidationError("邮件正文不能为空。")
-    if len(body) > settings.max_body_chars:
+    maximum_body_chars = body_max_chars or settings.max_body_chars
+    if len(body) > maximum_body_chars:
         raise MailRelayValidationError(
-            f"邮件正文不能超过 {settings.max_body_chars} 个字符。"
+            f"邮件正文不能超过 {maximum_body_chars} 个字符。"
         )
 
     validate_email_address(settings.sender_address, field_name="发件人地址")

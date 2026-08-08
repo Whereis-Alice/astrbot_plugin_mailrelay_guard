@@ -246,7 +246,46 @@
     "min": 1,
     "max": 50000,
     "description": "纯文本正文最大字符数",
-    "hint": "当前版本只发送纯文本，不发送 HTML 或附件，以缩小外发面。"
+    "hint": "适用于普通纯文本邮件。HTML 模板源码由 max_html_body_chars 单独限制。"
+  },
+  "enable_html_mail": {
+    "type": "bool",
+    "default": false,
+    "description": "允许爱丽丝发送 HTML 模板邮件",
+    "hint": "默认关闭。开启并重载插件后，会注册受现有收件人权限约束的三种 HTML 邮件工具；每封 HTML 邮件都会自动附带纯文本备用内容。"
+  },
+  "sanitize_html_before_send": {
+    "type": "bool",
+    "default": true,
+    "description": "发送前严格清洗 HTML 邮件",
+    "hint": "默认开启。会保留受支持的内联排版样式，移除未知标签和属性。关闭后只会放宽部分无主动内容的 CSS 样式；脚本、表单、事件属性、危险 URL、相对 URL 和外链 CSS 仍会被强制移除。"
+  },
+  "html_allow_links": {
+    "type": "bool",
+    "default": false,
+    "description": "允许 HTML 邮件中的 HTTPS 链接",
+    "hint": "默认关闭，避免聊天内容被包装为跳转链接。开启后仅保留绝对 HTTPS 链接，并自动添加安全 rel 属性。"
+  },
+  "html_allow_remote_images": {
+    "type": "bool",
+    "default": false,
+    "description": "允许 HTML 邮件加载远程图片",
+    "hint": "默认关闭，避免收件人打开邮件时向第三方暴露 IP 和阅读时间。开启后还必须在 html_remote_image_allowed_domains 填写精确图片域名。"
+  },
+  "html_remote_image_allowed_domains": {
+    "type": "list",
+    "items": {"type": "string"},
+    "default": [],
+    "description": "HTML 远程图片域名白名单",
+    "hint": "仅在 html_allow_remote_images 开启时生效。每项填写精确 HTTPS 主机名，例如 cdn.example.com；留空时不会保留任何远程图片。"
+  },
+  "max_html_body_chars": {
+    "type": "int",
+    "default": 30000,
+    "min": 1,
+    "max": 200000,
+    "description": "HTML 模板源码最大字符数",
+    "hint": "HTML、内联 CSS 和正文均计入；超出时会拒绝发送，不会截断。"
   },
   "max_messages_per_hour": {
     "type": "int",

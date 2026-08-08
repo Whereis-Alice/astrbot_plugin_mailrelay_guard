@@ -12,6 +12,8 @@ from astrbot_plugin_mailrelay_guard.mailrelay_guard.identity import SelfMailboxR
 from astrbot_plugin_mailrelay_guard.mailrelay_guard.smtp_client import DeliveryResult
 from astrbot_plugin_mailrelay_guard.main import (
     MailRelayGuardPlugin,
+    MailRelaySendHtmlToRecipientTool,
+    MailRelaySendHtmlToSelfTool,
     MailRelaySendToSelfTool,
 )
 
@@ -101,6 +103,34 @@ class PluginFlowTests(unittest.TestCase):
                         "mailrelay_notify_owner",
                         "mailrelay_send_to_self",
                         "mailrelay_send_to_recipient",
+                    },
+                )
+                await plugin.terminate()
+
+        asyncio.run(scenario())
+
+    def test_initialize_registers_html_tools_only_when_enabled(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as temporary_dir:
+                context = FakeContext()
+                plugin = MailRelayGuardPlugin(
+                    context,
+                    plugin_config(enable_html_mail=True),
+                )
+                with patch(
+                    "astrbot_plugin_mailrelay_guard.main.StarTools.get_data_dir",
+                    return_value=temporary_dir,
+                ):
+                    await plugin.initialize()
+                self.assertEqual(
+                    {tool.name for tool in context.tools},
+                    {
+                        "mailrelay_notify_owner",
+                        "mailrelay_send_to_self",
+                        "mailrelay_send_to_recipient",
+                        "mailrelay_notify_owner_html",
+                        "mailrelay_send_html_to_self",
+                        "mailrelay_send_html_to_recipient",
                     },
                 )
                 await plugin.terminate()
@@ -221,6 +251,75 @@ class PluginFlowTests(unittest.TestCase):
 
             self.assertIn("SMTP", result)
             self.assertEqual(sent_calls[0][0], ["user@example.com"])
+
+        asyncio.run(scenario())
+
+    def test_html_self_tool_sanitizes_content_and_keeps_recipient_isolation(self) -> None:
+        async def scenario() -> None:
+            plugin = MailRelayGuardPlugin(
+                FakeContext(),
+                plugin_config(enable_html_mail=True),
+            )
+            sent_calls = []
+
+            async def fake_send(
+                settings,
+                recipients,
+                subject,
+                body,
+                *,
+                html_body=None,
+            ):
+                sent_calls.append((recipients, subject, body, html_body))
+                return DeliveryResult("<test@example.com>", tuple(recipients), ())
+
+            plugin._smtp_client.send = fake_send
+            result = await MailRelaySendHtmlToSelfTool(plugin=plugin).call(
+                WrappedToolContext(FakeEvent(sender_id="user")),
+                subject="霓虹模板",
+                html_body=(
+                    '<div onclick="bad()" style="color:#ff00aa; padding:8px">'
+                    "安全模板<script>bad()</script></div>"
+                ),
+                recipients="attacker@example.com",
+            )
+
+            self.assertIn("SMTP", result)
+            self.assertEqual(sent_calls[0][0], ["user@example.com"])
+            self.assertIn("安全模板", sent_calls[0][2])
+            self.assertIn("color:#ff00aa", sent_calls[0][3])
+            self.assertNotIn("onclick", sent_calls[0][3])
+            self.assertNotIn("script", sent_calls[0][3])
+
+            denied = await MailRelaySendHtmlToRecipientTool(plugin=plugin).call(
+                WrappedToolContext(FakeEvent(sender_id="user")),
+                recipients="attacker@example.com",
+                subject="越权测试",
+                html_body="<p>不应发送</p>",
+            )
+            self.assertIn("仅允许", denied)
+            self.assertEqual(len(sent_calls), 1)
+
+        asyncio.run(scenario())
+
+    def test_html_delivery_is_rejected_when_feature_is_disabled(self) -> None:
+        async def scenario() -> None:
+            plugin = MailRelayGuardPlugin(FakeContext(), plugin_config())
+            sent_calls = []
+
+            async def fake_send(settings, recipients, subject, body):
+                sent_calls.append((recipients, subject, body))
+                return DeliveryResult("<test@example.com>", tuple(recipients), ())
+
+            plugin._smtp_client.send = fake_send
+            result = await MailRelaySendHtmlToSelfTool(plugin=plugin).call(
+                WrappedToolContext(FakeEvent(sender_id="user")),
+                subject="关闭功能",
+                html_body="<p>不应发送</p>",
+            )
+
+            self.assertIn("尚未开启 HTML", result)
+            self.assertEqual(sent_calls, [])
 
         asyncio.run(scenario())
 

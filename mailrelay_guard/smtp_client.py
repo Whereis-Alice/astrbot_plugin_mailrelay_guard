@@ -37,7 +37,7 @@ class DeliveryResult:
 
 
 class SMTPMailRelayClient:
-    """Send text emails without blocking AstrBot's event loop."""
+    """Send plain or multipart HTML emails without blocking AstrBot's event loop."""
 
     async def send(
         self,
@@ -45,6 +45,8 @@ class SMTPMailRelayClient:
         recipients: list[str],
         subject: str,
         body: str,
+        *,
+        html_body: str | None = None,
     ) -> DeliveryResult:
         return await asyncio.to_thread(
             self._send_sync,
@@ -52,6 +54,7 @@ class SMTPMailRelayClient:
             tuple(recipients),
             subject.strip(),
             body.strip(),
+            html_body,
         )
 
     async def test_connection(self, settings: MailRelaySettings) -> None:
@@ -63,8 +66,15 @@ class SMTPMailRelayClient:
         recipients: tuple[str, ...],
         subject: str,
         body: str,
+        html_body: str | None = None,
     ) -> DeliveryResult:
-        message = self._build_message(settings, recipients, subject, body)
+        message = self._build_message(
+            settings,
+            recipients,
+            subject,
+            body,
+            html_body=html_body,
+        )
         try:
             with self._open_and_authenticate(settings) as smtp:
                 refused = smtp.send_message(
@@ -133,6 +143,8 @@ class SMTPMailRelayClient:
         recipients: tuple[str, ...],
         subject: str,
         body: str,
+        *,
+        html_body: str | None = None,
     ) -> EmailMessage:
         message = EmailMessage(policy=SMTP)
         message["From"] = Address(
@@ -146,6 +158,8 @@ class SMTPMailRelayClient:
         )
         message["X-AstrBot-Plugin"] = "MailRelayGuard"
         message.set_content(body, subtype="plain", charset="utf-8")
+        if html_body is not None:
+            message.add_alternative(html_body, subtype="html", charset="utf-8")
         return message
 
     @staticmethod

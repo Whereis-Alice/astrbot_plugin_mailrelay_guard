@@ -100,3 +100,28 @@ class SMTPClientTests(unittest.TestCase):
         self.assertTrue(instance.starttls_called)
         self.assertEqual(instance.ehlo_count, 2)
         self.assertTrue(instance.closed)
+
+    def test_html_delivery_contains_plain_and_html_alternatives(self) -> None:
+        from astrbot_plugin_mailrelay_guard.mailrelay_guard import smtp_client
+
+        FakeSMTP.instances.clear()
+        with patch.object(smtp_client.smtplib, "SMTP_SSL", FakeSMTP):
+            client = SMTPMailRelayClient()
+            asyncio.run(
+                client.send(
+                    smtp_settings(),
+                    ["receiver@example.com"],
+                    "HTML 测试主题",
+                    "纯文本备用内容",
+                    html_body='<div style="color:#ff00aa">HTML 内容</div>',
+                )
+            )
+
+        message = FakeSMTP.instances[-1].sent_message[0]
+        self.assertTrue(message.is_multipart())
+        plain_part = message.get_body(preferencelist=("plain",))
+        html_part = message.get_body(preferencelist=("html",))
+        self.assertIsNotNone(plain_part)
+        self.assertIsNotNone(html_part)
+        self.assertIn("纯文本备用内容", plain_part.get_content())
+        self.assertIn("HTML 内容", html_part.get_content())
