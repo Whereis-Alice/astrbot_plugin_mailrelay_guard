@@ -2,7 +2,7 @@ name: astrbot_plugin_mailrelay_guard
 display_name: MailRelay Guard（邮件中继防护）
 desc: 为 Alice 提供直接 SMTP 邮件投递，支持主人通知、仅发给自己和管理员代发三种收件人模式。
 short_desc: 支持 QQ/NapCat 自身邮箱解析，并在服务端强制校验收件人权限的邮件工具。
-version: v1.1.1
+version: v1.1.2
 author: Huli3
 repo: https://github.com/Whereis-Alice/astrbot_plugin_mailrelay_guard
 astrbot_version: ">=4.25,<5"

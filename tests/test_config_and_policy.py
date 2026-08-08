@@ -51,11 +51,13 @@ class ConfigAndPolicyTests(unittest.TestCase):
         self.assertIn("smtp_username", problems)
         self.assertIn("smtp_password", problems)
 
-    def test_explicitly_blank_smtp_host_does_not_fall_back_to_163(self) -> None:
-        settings = load_settings({"smtp_host": ""})
+    def test_blank_or_null_smtp_host_does_not_fall_back_to_163(self) -> None:
+        for value in ("", None):
+            with self.subTest(value=value):
+                settings = load_settings({"smtp_host": value})
 
-        self.assertEqual(settings.smtp_host, "")
-        self.assertIn("smtp_host", " ".join(configuration_problems(settings)))
+                self.assertEqual(settings.smtp_host, "")
+                self.assertIn("smtp_host", " ".join(configuration_problems(settings)))
 
     def test_unknown_boolean_values_use_conservative_settings(self) -> None:
         settings = load_settings(
@@ -66,6 +68,25 @@ class ConfigAndPolicyTests(unittest.TestCase):
                 "require_private_chat_for_self_delivery": "私聊",
                 "restrict_admin_other_recipients": "不限制",
                 "audit_log_enabled": "日志",
+            }
+        )
+
+        self.assertFalse(settings.enabled)
+        self.assertFalse(settings.allow_plain_smtp)
+        self.assertFalse(settings.enable_admin_other_delivery)
+        self.assertTrue(settings.require_private_chat_for_self_delivery)
+        self.assertTrue(settings.restrict_admin_other_recipients)
+        self.assertTrue(settings.audit_log_enabled)
+
+    def test_null_boolean_values_use_conservative_settings(self) -> None:
+        settings = load_settings(
+            {
+                "enabled": None,
+                "allow_plain_smtp": None,
+                "enable_admin_other_delivery": None,
+                "require_private_chat_for_self_delivery": None,
+                "restrict_admin_other_recipients": None,
+                "audit_log_enabled": None,
             }
         )
 

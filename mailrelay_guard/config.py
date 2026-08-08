@@ -77,9 +77,7 @@ def load_settings(config: Mapping[str, Any] | Any | None) -> MailRelaySettings:
         enabled=_as_bool(
             _get(config, "enabled", True), True, invalid_default=False
         ),
-        smtp_host=_as_text_allow_empty(
-            _get(config, "smtp_host", DEFAULT_SMTP_HOST), DEFAULT_SMTP_HOST
-        ),
+        smtp_host=_as_required_text(_get(config, "smtp_host", DEFAULT_SMTP_HOST)),
         smtp_port=_as_int(
             _get(config, "smtp_port", DEFAULT_SMTP_PORT),
             DEFAULT_SMTP_PORT,
@@ -180,7 +178,7 @@ def load_settings(config: Mapping[str, Any] | Any | None) -> MailRelaySettings:
             False,
             invalid_default=False,
         ),
-        qq_mail_domain=_as_text(_get(config, "qq_mail_domain", "qq.com"), "qq.com")
+        qq_mail_domain=_as_required_text(_get(config, "qq_mail_domain", "qq.com"))
         .casefold()
         .lstrip("@"),
         self_binding_enabled=_as_bool(
@@ -332,12 +330,10 @@ def _as_text(value: Any, default: str = "") -> str:
     return text or default
 
 
-def _as_text_allow_empty(value: Any, default: str) -> str:
-    """Use the install default only when the dashboard supplies no value."""
+def _as_required_text(value: Any) -> str:
+    """Preserve explicit blank or null values so configuration validation can reject them."""
 
-    if value is None:
-        return default
-    return str(value).strip()
+    return str(value or "").strip()
 
 
 def _as_bool(value: Any, default: bool, *, invalid_default: bool | None = None) -> bool:
@@ -346,13 +342,13 @@ def _as_bool(value: Any, default: bool, *, invalid_default: bool | None = None) 
         return value
     if isinstance(value, str):
         normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on", "enabled"}:
+        if normalized in {"1", "true", "yes", "on", "enabled", "是", "开", "开启", "启用"}:
             return True
-        if normalized in {"0", "false", "no", "off", "disabled"}:
+        if normalized in {"0", "false", "no", "off", "disabled", "否", "关", "关闭", "禁用"}:
             return False
         return fallback
     if value is None:
-        return default
+        return fallback
     if isinstance(value, (int, float)):
         if value == 1:
             return True

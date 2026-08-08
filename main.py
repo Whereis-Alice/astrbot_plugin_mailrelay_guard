@@ -46,7 +46,7 @@ from .mailrelay_guard.rate_limit import (
 from .mailrelay_guard.smtp_client import MailRelayTransportError, SMTPMailRelayClient
 
 PLUGIN_ID = "astrbot_plugin_mailrelay_guard"
-PLUGIN_VERSION = "v1.1.1"
+PLUGIN_VERSION = "v1.1.2"
 ONE_HOUR_SECONDS = 60 * 60
 RecipientMode = Literal["owner", "self", "other", "binding"]
 
