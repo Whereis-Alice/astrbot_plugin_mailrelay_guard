@@ -13,6 +13,7 @@ const state = {
   selectedDetail: null,
   detailTab: "plain",
   previewZoom: 1.2,
+  readerZen: false,
   demo: !pluginBridge,
 };
 
@@ -66,7 +67,7 @@ const mockSettings = {
 };
 
 const mockSummary = {
-  version: "v1.3.0",
+  version: "v1.3.3",
   readiness: "ready",
   configuration_problems: [],
   smtp: { host: "smtp.163.com", port: 465, security: "ssl", account_configured: true, sender_configured: true },
@@ -273,6 +274,17 @@ function setConnection(mode, text) {
   sidebar.className = mode === "is-error" ? "is-error" : mode === "is-warning" ? "is-warning" : "";
 }
 
+function syncReaderFocusMode() {
+  const canFocus = state.activeView === "mailbox" && Boolean(state.selectedItem);
+  const button = byId("reader-focus-toggle");
+  if (!canFocus) state.readerZen = false;
+  document.body.classList.toggle("mail-reader-active", canFocus);
+  document.body.classList.toggle("mail-reader-zen", canFocus && state.readerZen);
+  button.hidden = !canFocus;
+  button.setAttribute("aria-pressed", String(canFocus && state.readerZen));
+  button.textContent = state.readerZen ? "显示列表" : "专注阅读";
+}
+
 function settingsValue(id) {
   const element = byId(id);
   return element?.value ?? "";
@@ -281,6 +293,7 @@ function settingsValue(id) {
 function showView(view) {
   state.activeView = view;
   document.body.dataset.activeView = view;
+  syncReaderFocusMode();
   all(".view").forEach((element) => element.classList.toggle("active", element.id === `view-${view}`));
   all(".nav-button").forEach((element) => {
     const active = element.dataset.view === view;
@@ -453,6 +466,9 @@ async function loadMailbox(offset = state.offset) {
 function renderDetailEmpty() {
   const detail = clear(byId("message-detail"));
   query(".mailbox-grid")?.classList.remove("detail-open");
+  state.readerZen = false;
+  document.body.classList.remove("mail-reader-active", "mail-reader-zen");
+  byId("reader-focus-toggle").hidden = true;
   detail.classList.remove("open");
   const empty = create("div", "detail-empty");
   empty.append(create("span", "", "MAIL"), create("h2", "", "选择一封邮件"), create("p", "", "详情只在打开记录时加载。主题、正文和 HTML 是否可见，取决于本地内容归档设置。"));
@@ -606,6 +622,8 @@ function renderMessageDetail(detail) {
 async function selectMessage(item) {
   state.selectedItem = item;
   state.detailTab = item.content_format === "html" ? "preview" : "plain";
+  state.readerZen = false;
+  syncReaderFocusMode();
   query(".mailbox-grid")?.classList.add("detail-open");
   renderMessageList(state.messages || { items: [] });
   const root = clear(byId("message-detail"));
@@ -620,6 +638,8 @@ async function selectMessage(item) {
     if (state.folder === "inbox" && item.recipient && !item.recipient.is_read) void updateMailboxState({ is_read: true }, true);
     renderMessageDetail(detail);
   } catch (error) {
+    state.selectedItem = null;
+    state.selectedDetail = null;
     renderDetailEmpty();
     setNotice(error.message || "读取邮件详情失败。", "error");
   }
@@ -833,6 +853,10 @@ function attachEvents() {
   byId("global-refresh").addEventListener("click", () => { void refreshAll(); });
   byId("mobile-refresh").addEventListener("click", () => { void refreshAll(); });
   byId("mobile-nav-toggle").addEventListener("click", handleResponsiveMenu);
+  byId("reader-focus-toggle").addEventListener("click", () => {
+    state.readerZen = !state.readerZen;
+    syncReaderFocusMode();
+  });
   byId("messages-refresh").addEventListener("click", () => { void loadMailbox(); });
   byId("message-search-button").addEventListener("click", () => { state.offset = 0; void loadMailbox(); });
   byId("message-search").addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); state.offset = 0; void loadMailbox(); } });
