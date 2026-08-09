@@ -21,9 +21,13 @@ from astrbot_plugin_mailrelay_guard.main import (
 class FakeContext:
     def __init__(self) -> None:
         self.tools = []
+        self.web_apis = []
 
     def add_llm_tools(self, *tools) -> None:
         self.tools.extend(tools)
+
+    def register_web_api(self, route, handler, methods, description) -> None:
+        self.web_apis.append((route, handler, methods, description))
 
 
 class FakeEvent:
@@ -87,6 +91,31 @@ def plugin_config(**overrides):
 
 
 class PluginFlowTests(unittest.TestCase):
+    def test_registers_protected_dashboard_api_and_rejects_secret_updates(self) -> None:
+        async def scenario() -> None:
+            context = FakeContext()
+            plugin = MailRelayGuardPlugin(context, plugin_config())
+            routes = {(route, tuple(methods)) for route, _, methods, _ in context.web_apis}
+            self.assertIn(
+                ("/astrbot_plugin_mailrelay_guard/webui/summary", ("GET",)),
+                routes,
+            )
+            self.assertIn(
+                ("/astrbot_plugin_mailrelay_guard/webui/settings", ("POST",)),
+                routes,
+            )
+
+            changed = await plugin._update_webui_settings(
+                {"mail_history_store_content": True, "mail_history_max_records": 320}
+            )
+            self.assertEqual(changed, {"mail_history_store_content", "mail_history_max_records"})
+            self.assertTrue(plugin.config["mail_history_store_content"])
+            self.assertEqual(plugin.config["mail_history_max_records"], 320)
+            with self.assertRaisesRegex(ValueError, "不允许"):
+                await plugin._update_webui_settings({"smtp_password": "do-not-accept"})
+
+        asyncio.run(scenario())
+
     def test_initialize_registers_the_three_direct_tools(self) -> None:
         async def scenario() -> None:
             with tempfile.TemporaryDirectory() as temporary_dir:

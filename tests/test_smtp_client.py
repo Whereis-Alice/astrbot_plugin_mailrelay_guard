@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import smtplib
 import unittest
 from typing import ClassVar
 from unittest.mock import patch
@@ -125,3 +126,31 @@ class SMTPClientTests(unittest.TestCase):
         self.assertIsNotNone(html_part)
         self.assertIn("纯文本备用内容", plain_part.get_content())
         self.assertIn("HTML 内容", html_part.get_content())
+
+    def test_all_refused_recipients_remain_visible_to_delivery_history(self) -> None:
+        from astrbot_plugin_mailrelay_guard.mailrelay_guard import smtp_client
+
+        class RejectingSMTP(FakeSMTP):
+            def send_message(self, message, from_addr: str, to_addrs: list[str]):
+                self.sent_message = (message, from_addr, to_addrs)
+                raise smtplib.SMTPRecipientsRefused(
+                    {
+                        address: (550, b"mailbox rejected")
+                        for address in to_addrs
+                    }
+                )
+
+        FakeSMTP.instances.clear()
+        with patch.object(smtp_client.smtplib, "SMTP_SSL", RejectingSMTP):
+            result = asyncio.run(
+                SMTPMailRelayClient().send(
+                    smtp_settings(),
+                    ["one@example.com", "two@example.net"],
+                    "拒收测试",
+                    "正文",
+                )
+            )
+
+        self.assertEqual(result.accepted_recipients, ())
+        self.assertEqual(result.refused_recipients, ("one@example.com", "two@example.net"))
+        self.assertFalse(result.is_complete)

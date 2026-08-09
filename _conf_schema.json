@@ -287,6 +287,34 @@
     "description": "HTML 模板源码最大字符数",
     "hint": "HTML、内联 CSS 和正文均计入；超出时会拒绝发送，不会截断。"
   },
+  "mail_history_enabled": {
+    "type": "bool",
+    "default": true,
+    "description": "记录 WebUI 邮件投递历史",
+    "hint": "默认开启，仅保存脱敏的投递元数据、模式和 SMTP 接受状态。历史库与最小化审计日志独立，可在 WebUI 中清空。"
+  },
+  "mail_history_store_content": {
+    "type": "bool",
+    "default": false,
+    "description": "在邮件历史中保存主题和正文",
+    "hint": "默认关闭。开启后，SMTP 至少接受一位收件人时才会在本机 SQLite 库保存主题、纯文本和已清洗 HTML，供受 Dashboard 登录保护的 WebUI 查看与预览。验证码邮件永不保存。"
+  },
+  "mail_history_retention_days": {
+    "type": "int",
+    "default": 30,
+    "min": 1,
+    "max": 3650,
+    "description": "邮件历史保留天数",
+    "hint": "超过此天数的本地历史会在初始化和下一次写入时删除。只影响 WebUI 历史，不影响邮箱服务商实际邮件。"
+  },
+  "mail_history_max_records": {
+    "type": "int",
+    "default": 500,
+    "min": 20,
+    "max": 5000,
+    "description": "邮件历史最大记录数",
+    "hint": "超过上限时自动删除最旧记录及其本地投递副本状态，避免 SQLite 数据库无限增长。"
+  },
   "max_messages_per_hour": {
     "type": "int",
     "default": 30,

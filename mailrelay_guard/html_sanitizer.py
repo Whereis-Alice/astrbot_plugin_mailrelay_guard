@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
@@ -240,6 +240,27 @@ def prepare_html_mail(settings: MailRelaySettings, html_body: str) -> PreparedHt
             "HTML 邮件在清洗后没有可用文字，无法生成纯文本备用内容。"
         )
     return PreparedHtmlMail(html_body=sanitized_html, plain_body=plain_body)
+
+
+def prepare_html_preview(settings: MailRelaySettings, html_body: str) -> str:
+    """Return a stricter HTML fragment for the local Dashboard iframe preview.
+
+    A message may have been valid for SMTP delivery when remote images or HTTPS
+    links were enabled. Dashboard previews must not contact those destinations,
+    so they always re-clean the stored HTML with those capabilities disabled.
+    """
+
+    raw_html = str(html_body or "")
+    preview_settings = replace(
+        settings,
+        enable_html_mail=True,
+        sanitize_html_before_send=True,
+        html_allow_links=False,
+        html_allow_remote_images=False,
+        html_remote_image_allowed_domains=frozenset(),
+        max_html_body_chars=max(settings.max_html_body_chars, len(raw_html)),
+    )
+    return prepare_html_mail(preview_settings, raw_html).html_body
 
 
 def _allowed_attributes(settings: MailRelaySettings) -> dict[str, set[str]]:

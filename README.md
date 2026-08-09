@@ -4,7 +4,7 @@ MailRelay Guard 是为 Alice 一类 AstrBot 助手准备的 SMTP 邮件插件。
 
 插件标识：`astrbot_plugin_mailrelay_guard`
 
-需要 AstrBot `4.25` 或更高版本，且低于 `5`。提高最低版本是为了避免较旧版本在重载或卸载插件后残留 LLM 工具。
+需要 AstrBot `4.27.2` 或更高版本，且低于 `5`。此版本要求同时覆盖直接 LLM 工具的正确重载，以及 Dashboard 插件 Pages 的邮件中心能力。
 
 ## 功能与权限
 
@@ -34,6 +34,8 @@ v1.1 使用三种直接投递工具取代了旧版的草稿确认流程。旧的
 `v1.1.2` 进一步按拒绝优先的原则处理损坏配置：显式清空或写为 `null` 的 `smtp_host` 不会静默恢复为 `smtp.163.com`；无法识别或为 `null` 的敏感布尔开关也不会意外开启投递能力。
 
 `v1.2.0` 增加可配置清洗的 HTML 模板邮件。HTML 功能默认关闭，升级后不会改变现有纯文本工具的行为。
+
+`v1.3.0` 增加 Dashboard 邮件中心和本地投递历史。历史记录默认只保存脱敏元数据；邮件主题和正文仍默认不落盘。升级后请确认 AstrBot 已升级到 `4.27.2` 或更高版本。
 
 ## 网易 163 快速配置
 
@@ -195,6 +197,36 @@ HTML 邮件会以 `multipart/alternative` 格式同时发送 HTML 与纯文本�
 
 关闭 `sanitize_html_before_send` 只会放宽一部分无主动内容的布局样式，基础安全过滤始终存在，不能作为任意网页直通开关。`html_allow_links` 开启后仅保留绝对 HTTPS 链接。远程图片默认关闭；要保留图片，必须同时开启 `html_allow_remote_images`，并在 `html_remote_image_allowed_domains` 填写精确主机名，例如 `cdn.example.com`。空白名单不会保留任何远程图片。
 
+## Dashboard 邮件中心
+
+安装并重载 `v1.3.0` 后，在 AstrBot Dashboard 的插件页面中打开 **MailRelay Guard - 邮件中心**。该页面由 AstrBot 的已登录 Dashboard 承载，不会额外启动公开的 Web 服务。
+
+邮件中心提供以下工作区：
+
+- **总览**：显示 SMTP 就绪状态、HTML 工具与清洗状态、今日投递数量和本地历史摘要。
+- **发件箱**：显示 Alice 的本地发送尝试、投递模式、收件人数、SMTP 接受或拒绝结果及脱敏收件人地址。
+- **本地投递副本**：按 SMTP 已接受的收件人展示本地镜像，可标记已读、收藏或归档。它不是 IMAP、POP3 或真实邮箱收件箱，也不能说明邮件已经最终送达或被阅读。
+- **投递异常**：筛选失败、部分接受和未知结果，便于排查 SMTP 或收件人问题。
+- **安全配置**：快速调整非敏感的投递开关、HTML 安全策略、历史保留和限流参数；修改 `enable_html_mail` 后仍需要重载插件，HTML 工具才会重新注册。
+
+### HTML 安全预览
+
+当邮件内容归档已开启时，邮件详情可在“HTML 安全预览”“纯文本”和“清洗后源码”之间切换。预览使用已清洗的 HTML，并在 Dashboard 中再次按更严格规则处理：不加载远程图片、不保留链接跳转，也不会执行脚本、表单或其他主动内容。预览只用于核对本地投递副本，不保证与各邮箱客户端的最终渲染完全一致。
+
+### 本地历史与隐私
+
+`mail_history_enabled` 默认是 `true`。默认历史只保存在 AstrBot 插件数据目录中的本地 SQLite 数据库，包含时间、投递模式、邮件格式、SMTP 结果、收件人数量、收件域名和脱敏邮箱地址；不会保存主题、正文、完整邮箱地址、原始 QQ 身份或 SMTP 授权码。邮箱绑定验证码邮件也不会进入此历史。
+
+若确实需要在邮件中心查看主题、纯文本正文和 HTML 预览，请主动开启 `mail_history_store_content=true`。此时，只有 SMTP 至少接受一位收件人后，插件才会在本机保存主题、正文和**已清洗后的** HTML，用于 Dashboard 查看；不会保存清洗前的原始 HTML。请仅在你信任该 AstrBot 主机及其 Dashboard 管理员的场景下启用，并按需要缩短保留期限或在邮件中心中清空本地历史。
+
+本地历史默认保留 `30` 天，最多 `500` 条，由 `mail_history_retention_days` 与 `mail_history_max_records` 控制。清空历史只删除插件本地副本，不会删除已经交给邮件服务商的邮件，也不会影响收件人真实邮箱。
+
+### WebUI 与 SMTP 凭据
+
+邮件中心不需要 NapCat 专用 URL、Token 或额外 WebUI 配置；它复用 AstrBot 已建立的 Dashboard 和 OneBot/NapCat 连接。NapCat 相关的邮箱资料解析仍由现有 `napcat_*` 配置项控制。
+
+为避免凭据经页面接口暴露，`smtp_host`、`smtp_port`、`smtp_security`、`smtp_username`、`smtp_password`、`sender_address` 和 `sender_name` 必须继续在 AstrBot 原生插件配置面板中填写。尤其是 `smtp_password` 应填写服务商提供的 SMTP 客户端授权码，不能通过邮件中心保存、查看或修改。
+
 ## 斜杠命令
 
 | 命令 | 权限 | 说明 |
@@ -235,6 +267,7 @@ HTML 邮件会以 `multipart/alternative` 格式同时发送 HTML 与纯文本�
 | QQ 号推导 | `allow_qq_mailbox_derivation`、`qq_mail_domain` | 默认关闭，因为 QQ 号推导不是已验证的资料邮箱。 |
 | 管理员收件人策略 | `restrict_admin_other_recipients`、`admin_other_recipient_allowlist`、`admin_other_allowed_domains` | 对管理员第三方投递增加可选白名单限制。 |
 | HTML 模板 | `enable_html_mail`、`sanitize_html_before_send`、`html_allow_links`、`html_allow_remote_images`、`html_remote_image_allowed_domains`、`max_html_body_chars` | HTML 默认关闭且严格清洗。远程图片必须同时开启开关并配置精确域名白名单。 |
+| 邮件中心历史 | `mail_history_enabled`、`mail_history_store_content`、`mail_history_retention_days`、`mail_history_max_records` | 默认记录脱敏投递元数据，不保存主题和正文。开启内容归档后，已接受邮件的主题、纯文本和清洗后 HTML 会保存在本机，供 Dashboard 查看。 |
 | 限制 | `max_messages_per_hour`、`max_successful_messages_per_actor_per_hour`、`max_delivery_attempts_per_actor_per_hour`、`actor_min_send_interval_seconds` | SMTP 失败也会计入单用户尝试上限。 |
 | 隐私 | `audit_log_enabled`、`audit_max_file_kb` | 审计不会记录邮件正文、授权码或完整邮箱地址。 |
 
@@ -247,6 +280,7 @@ HTML 邮件会以 `multipart/alternative` 格式同时发送 HTML 与纯文本�
 - QQ/NapCat 资料查询只针对当前调用者。好友列表只在内存中用于匹配，不会整体缓存、记录或暴露给 Alice。
 - 已验证的自助邮箱保存在 AstrBot 的插件数据目录中。待验证的验证码仅以哈希形式保存在内存，重载插件后失效。
 - 审计日志只记录调用者指纹、投递模式、邮件格式、结果、收件人数及收件域名，不记录主题、纯文本正文、HTML 模板、SMTP 密钥或完整邮箱。
+- 邮件中心历史与审计日志相互独立。历史默认只保存脱敏投递元数据；只有明确开启 `mail_history_store_content` 后才会保存已接受邮件的主题、正文和清洗后 HTML。Dashboard 预览会再次禁用链接和远程图片。
 - 默认通过 TLS 投递。除非明确开启 `allow_plain_smtp`，否则明文 SMTP 会被阻止。
 - 全局成功投递上限、单用户成功上限、包含失败的单用户尝试上限和单用户冷却时间，可降低误发和滥用风险。
 
@@ -276,13 +310,21 @@ HTML 邮件会以 `multipart/alternative` 格式同时发送 HTML 与纯文本�
 
 不需要。MailRelay Guard 不会新建 NapCat HTTP 连接，也不需要 NapCat 基础 URL。当 AstrBot 已接收 `aiocqhttp` 事件时，插件会检测该事件所使用的适配器连接。QQ 邮箱资料仍可能不存在，因此提供了验证绑定作为回退方式。
 
+### 邮件中心没有显示正文或 HTML 预览
+
+默认情况下，`mail_history_store_content` 为 `false`，因此历史只显示脱敏投递信息，不保存主题和正文。请在邮件中心“安全配置”或 AstrBot 插件配置中明确开启该项；只建议在信任本机和 Dashboard 管理员的环境中开启。该设置只影响之后至少被 SMTP 接受的邮件，已经仅保存元数据的旧记录不会补回正文。
+
+### 邮件中心是否是真实收件箱
+
+不是。当前版本不连接 IMAP 或 POP3，无法读取真实邮箱中的来信。页面中的“本地投递副本”只是 Alice 已提交给 SMTP 服务端、且该服务端已接受的本地镜像；它不代表最终投递成功，更不代表收件人已阅读。
+
 ### AstrBot 面板显示问号
 
 本仓库的 `_conf_schema.json` 采用严格 UTF-8，无 BOM，符合 AstrBot 的 `encoding="utf-8"` 读取方式。不要把它转成 GBK，也不要为 JSON 添加 BOM。若面板仍显示问号，通常是运行中的旧插件副本或旧配置缓存。请安装本版本的插件包、重载插件，并确认 AstrBot 实际加载的是 `astrbot_plugin_mailrelay_guard` 目录中的最新文件。
 
 ## 开发检查
 
-AstrBot 提供插件 API，SMTP、TLS 和邮件 MIME 构造使用 Python 标准库。HTML 清洗依赖 `nh3` 与 `tinycss2`，AstrBot 安装插件时会按 `requirements.txt` 安装它们。
+AstrBot 提供插件 Pages 与 API，SMTP、TLS、邮件 MIME 构造和本地邮件历史 SQLite 存储使用 Python 标准库。HTML 清洗依赖 `nh3` 与 `tinycss2`，AstrBot 安装插件时会按 `requirements.txt` 安装它们。
 
 ```text
 python -m ruff check astrbot_plugin_mailrelay_guard

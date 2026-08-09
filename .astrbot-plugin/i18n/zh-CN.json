@@ -1,0 +1,13 @@
+{
+  "metadata": {
+    "display_name": "MailRelay Guard（邮件中继防护）",
+    "short_desc": "提供受服务端权限约束的 SMTP 与 HTML 模板邮件，附带本地邮件中心。",
+    "desc": "为 Alice 提供安全的 SMTP 邮件工具、HTML 清洗、本地投递历史和受 Dashboard 登录保护的邮件中心。"
+  },
+  "pages": {
+    "mail-center": {
+      "title": "Alice 邮件中心",
+      "desc": "查看本地投递记录、HTML 安全预览和非敏感运行配置。"
+    }
+  }
+}

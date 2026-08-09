@@ -25,7 +25,8 @@ from .mailrelay_guard.config import (
     is_placeholder_address,
     load_settings,
 )
-from .mailrelay_guard.html_sanitizer import prepare_html_mail
+from .mailrelay_guard.history import HistoryMessage, MailHistoryError, MailHistoryStore
+from .mailrelay_guard.html_sanitizer import prepare_html_mail, prepare_html_preview
 from .mailrelay_guard.identity import (
     ActorIdentity,
     SelfMailboxResolver,
@@ -45,12 +46,44 @@ from .mailrelay_guard.rate_limit import (
     SuccessWindowRateLimiter,
 )
 from .mailrelay_guard.smtp_client import MailRelayTransportError, SMTPMailRelayClient
+from .mailrelay_guard.web_api import (
+    error_response,
+    json_response,
+    query_value,
+    read_json_body,
+)
 
 PLUGIN_ID = "astrbot_plugin_mailrelay_guard"
-PLUGIN_VERSION = "v1.2.0"
+PLUGIN_VERSION = "v1.3.0"
 ONE_HOUR_SECONDS = 60 * 60
 RecipientMode = Literal["owner", "self", "other", "binding"]
 MailContentFormat = Literal["plain", "html"]
+
+_WEBUI_BOOLEAN_SETTINGS = frozenset(
+    {
+        "enabled",
+        "enable_owner_delivery",
+        "enable_self_delivery",
+        "enable_admin_other_delivery",
+        "require_private_chat_for_self_delivery",
+        "enable_html_mail",
+        "sanitize_html_before_send",
+        "html_allow_links",
+        "html_allow_remote_images",
+        "mail_history_enabled",
+        "mail_history_store_content",
+    }
+)
+_WEBUI_INTEGER_SETTINGS = {
+    "max_html_body_chars",
+    "mail_history_retention_days",
+    "mail_history_max_records",
+    "max_messages_per_hour",
+    "max_successful_messages_per_actor_per_hour",
+    "max_delivery_attempts_per_actor_per_hour",
+    "actor_min_send_interval_seconds",
+}
+_WEBUI_LIST_SETTINGS = frozenset({"html_remote_image_allowed_domains"})
 
 
 def _tool_event(context: ContextWrapper[AstrAgentContext]) -> AstrMessageEvent | None:
@@ -321,11 +354,15 @@ class MailRelayGuardPlugin(Star):
             max_keys=settings.max_tracked_actors
         )
         self._send_lock = asyncio.Lock()
+        self._history_lock = asyncio.Lock()
         self._audit_writer: AuditWriter | None = None
         self._mailboxes: MailboxBindingStore | None = None
+        self._data_dir: Path | None = None
+        self._mail_history: MailHistoryStore | None = None
         self._mailbox_resolver = SelfMailboxResolver(None)
         self._llm_tools_registered = False
         self._html_tools_registered = False
+        self._register_dashboard_apis()
 
     async def initialize(self) -> None:
         """Prepare private storage and register the direct, mode-scoped LLM tools."""
@@ -333,6 +370,7 @@ class MailRelayGuardPlugin(Star):
         settings = self._settings()
         try:
             data_dir = Path(StarTools.get_data_dir(PLUGIN_ID))
+            self._data_dir = data_dir
             self._audit_writer = AuditWriter(
                 data_dir,
                 max_file_kb=settings.audit_max_file_kb,
@@ -341,6 +379,8 @@ class MailRelayGuardPlugin(Star):
             self._mailbox_resolver = SelfMailboxResolver(self._mailboxes)
         except (OSError, RuntimeError) as exc:
             logger.warning("[%s] local storage unavailable: %s", PLUGIN_ID, exc)
+
+        await self._ensure_mail_history(settings)
 
         if settings.enabled and settings.enable_llm_mail_tools:
             self.context.add_llm_tools(
@@ -371,8 +411,405 @@ class MailRelayGuardPlugin(Star):
         """Discard in-memory profile caches and pending verification codes."""
 
         self._mailboxes = None
+        self._mail_history = None
+        self._data_dir = None
         self._mailbox_resolver = SelfMailboxResolver(None)
         logger.info("[%s] terminated", PLUGIN_ID)
+
+    def _register_dashboard_apis(self) -> None:
+        """Expose the dashboard-only API used by the plugin Page bridge."""
+
+        register = getattr(self.context, "register_web_api", None)
+        if not callable(register):
+            return
+        routes = (
+            ("/webui/summary", self.webui_summary, ["GET"], "MailRelay summary"),
+            ("/webui/messages", self.webui_messages, ["GET"], "MailRelay messages"),
+            (
+                "/webui/message/<message_id>",
+                self.webui_message,
+                ["GET"],
+                "MailRelay message detail",
+            ),
+            ("/webui/settings", self.webui_settings_get, ["GET"], "MailRelay settings"),
+            (
+                "/webui/settings",
+                self.webui_settings_update,
+                ["POST"],
+                "MailRelay settings update",
+            ),
+            (
+                "/webui/smtp-probe",
+                self.webui_smtp_probe,
+                ["POST"],
+                "MailRelay SMTP probe",
+            ),
+            (
+                "/webui/mailbox-state",
+                self.webui_mailbox_state,
+                ["POST"],
+                "MailRelay local mailbox state",
+            ),
+            (
+                "/webui/history-clear",
+                self.webui_history_clear,
+                ["POST"],
+                "MailRelay history clear",
+            ),
+        )
+        for suffix, handler, methods, description in routes:
+            register(f"/{PLUGIN_ID}{suffix}", handler, methods, description)
+
+    async def webui_summary(self):
+        """Return redacted operational data for the protected Mail Center page."""
+
+        settings = self._settings()
+        history = await self._ensure_mail_history(settings)
+        try:
+            history_summary = await history.summary() if history is not None else None
+        except MailHistoryError as exc:
+            logger.warning("[%s] history summary unavailable: %s", PLUGIN_ID, exc)
+            history_summary = None
+        return json_response(
+            {
+                "version": PLUGIN_VERSION,
+                "readiness": "ready" if not configuration_problems(settings) else "needs_config",
+                "configuration_problems": configuration_problems(settings),
+                "smtp": {
+                    "host": settings.smtp_host or None,
+                    "port": settings.smtp_port,
+                    "security": settings.smtp_security,
+                    "account_configured": not is_placeholder_address(
+                        settings.smtp_username
+                    ),
+                    "sender_configured": not is_placeholder_address(
+                        settings.sender_address
+                    ),
+                },
+                "features": {
+                    "llm_tools_registered": self._llm_tools_registered,
+                    "html_tools_registered": self._html_tools_registered,
+                    "html_mail_enabled": settings.enable_html_mail,
+                    "html_strict_cleaning": settings.sanitize_html_before_send,
+                    "history_enabled": settings.mail_history_enabled,
+                    "history_store_content": settings.mail_history_store_content,
+                    "history_available": history is not None,
+                },
+                "history": history_summary,
+            }
+        )
+
+    async def webui_messages(self):
+        """List privacy-scoped outbox, delivery mirror, or failure rows."""
+
+        settings = self._settings()
+        history = await self._ensure_mail_history(settings)
+        if history is None:
+            return json_response(
+                {
+                    "enabled": False,
+                    "items": [],
+                    "total": 0,
+                    "limit": 0,
+                    "offset": 0,
+                    "has_more": False,
+                }
+            )
+        folder = str(query_value("folder", "sent") or "sent").casefold()
+        if folder not in {"sent", "inbox", "errors"}:
+            return error_response("不支持的邮件视图。", status_code=400)
+        limit = max(1, min(100, int(query_value("limit", 50, int))))
+        offset = max(0, int(query_value("offset", 0, int)))
+        try:
+            payload = await history.list_messages(
+                folder=folder,  # type: ignore[arg-type]
+                query=str(query_value("query", "") or ""),
+                status=str(query_value("status", "") or "").casefold(),
+                content_format=str(query_value("format", "") or "").casefold(),
+                limit=limit,
+                offset=offset,
+            )
+        except MailHistoryError as exc:
+            logger.warning("[%s] history list unavailable: %s", PLUGIN_ID, exc)
+            return error_response("本地邮件历史暂时不可用。", status_code=503)
+        payload["enabled"] = True
+        payload["folder"] = folder
+        payload["content_recording"] = settings.mail_history_store_content
+        return json_response(payload)
+
+    async def webui_message(self, message_id: str):
+        """Return one message detail and a second-pass-safe HTML preview."""
+
+        if not _is_hex_token(message_id, 32):
+            return error_response("邮件记录标识无效。", status_code=400)
+        settings = self._settings()
+        history = await self._ensure_mail_history(settings)
+        if history is None:
+            return error_response("邮件历史尚未启用。", status_code=404)
+        try:
+            record = await history.get_message(message_id)
+        except MailHistoryError as exc:
+            logger.warning("[%s] history detail unavailable: %s", PLUGIN_ID, exc)
+            return error_response("本地邮件历史暂时不可用。", status_code=503)
+        if record is None:
+            return error_response("未找到该邮件记录。", status_code=404)
+        archived_html = record.pop("html_body", None)
+        if archived_html:
+            try:
+                record["html_preview"] = prepare_html_preview(settings, archived_html)
+            except MailRelayValidationError:
+                record["html_preview"] = ""
+        else:
+            record["html_preview"] = ""
+        return json_response(record)
+
+    async def webui_settings_get(self):
+        """Return only non-secret settings that the Mail Center can edit."""
+
+        return json_response(self._webui_settings_payload(self._settings()))
+
+    async def webui_settings_update(self):
+        """Update a strict allowlist of non-secret runtime controls."""
+
+        payload = await read_json_body({})
+        updates = payload.get("settings") if isinstance(payload, dict) else None
+        if not isinstance(updates, dict):
+            return error_response("请求必须包含 settings 对象。", status_code=400)
+        try:
+            changed = await self._update_webui_settings(updates)
+        except (TypeError, ValueError) as exc:
+            return error_response(str(exc), status_code=400)
+        except OSError as exc:
+            logger.warning("[%s] dashboard config save failed: %s", PLUGIN_ID, exc)
+            return error_response("配置保存失败。", status_code=500)
+        settings = self._settings()
+        await self._ensure_mail_history(settings)
+        return json_response(
+            {
+                "changed": sorted(changed),
+                "restart_required": "enable_html_mail" in changed,
+                "settings": self._webui_settings_payload(settings),
+            }
+        )
+
+    async def webui_smtp_probe(self):
+        """Test TLS/login from the authenticated Dashboard without sending mail."""
+
+        settings = self._settings()
+        problems = configuration_problems(settings)
+        if problems:
+            return error_response("SMTP 配置尚未就绪。", data=problems, status_code=400)
+        try:
+            await self._smtp_client.test_connection(settings)
+        except MailRelayTransportError as exc:
+            await self._audit(
+                settings,
+                action="webui_smtp_probe",
+                outcome="failed",
+                actor=None,
+                detail="transport_error",
+            )
+            return error_response(str(exc), status_code=400)
+        await self._audit(
+            settings,
+            action="webui_smtp_probe",
+            outcome="succeeded",
+            actor=None,
+        )
+        return json_response({"message": "SMTP 连接与登录测试成功，未发送邮件。"})
+
+    async def webui_mailbox_state(self):
+        """Persist read/star/archive state for one accepted local delivery copy."""
+
+        payload = await read_json_body({})
+        if not isinstance(payload, dict):
+            return error_response("请求正文无效。", status_code=400)
+        message_id = str(payload.get("message_id", ""))
+        recipient_token = str(payload.get("recipient_token", ""))
+        if not _is_hex_token(message_id, 32) or not _is_hex_token(recipient_token, 24):
+            return error_response("投递副本标识无效。", status_code=400)
+        values = {
+            key: payload[key]
+            for key in ("is_read", "is_starred", "archived")
+            if key in payload
+        }
+        if not values or any(not isinstance(value, bool) for value in values.values()):
+            return error_response("邮箱状态必须是布尔值。", status_code=400)
+        history = await self._ensure_mail_history(self._settings())
+        if history is None:
+            return error_response("邮件历史尚未启用。", status_code=404)
+        try:
+            state = await history.update_mailbox_state(
+                history_id=message_id,
+                recipient_token=recipient_token,
+                is_read=values.get("is_read"),
+                is_starred=values.get("is_starred"),
+                archived=values.get("archived"),
+            )
+        except MailHistoryError as exc:
+            logger.warning("[%s] mailbox state update failed: %s", PLUGIN_ID, exc)
+            return error_response("本地投递副本更新失败。", status_code=503)
+        if state is None:
+            return error_response("未找到可更新的 SMTP 已接受副本。", status_code=404)
+        return json_response(state)
+
+    async def webui_history_clear(self):
+        """Clear optional local history after an explicit browser confirmation."""
+
+        payload = await read_json_body({})
+        if not isinstance(payload, dict) or payload.get("confirm") != "clear-mail-history":
+            return error_response("需要明确确认后才能清空本地邮件历史。", status_code=400)
+        history = await self._ensure_mail_history(self._settings())
+        if history is None:
+            return error_response("邮件历史尚未启用。", status_code=404)
+        try:
+            removed = await history.clear()
+        except MailHistoryError as exc:
+            logger.warning("[%s] history clear failed: %s", PLUGIN_ID, exc)
+            return error_response("清空本地邮件历史失败。", status_code=503)
+        return json_response({"removed": removed})
+
+    async def _ensure_mail_history(
+        self, settings: MailRelaySettings
+    ) -> MailHistoryStore | None:
+        if not settings.mail_history_enabled:
+            return None
+        if self._mail_history is not None:
+            return self._mail_history
+        if self._data_dir is None:
+            return None
+        async with self._history_lock:
+            if self._mail_history is not None:
+                return self._mail_history
+            try:
+                history = MailHistoryStore(self._data_dir)
+                await history.initialize(
+                    retention_days=settings.mail_history_retention_days,
+                    max_records=settings.mail_history_max_records,
+                )
+            except (MailHistoryError, OSError, RuntimeError) as exc:
+                logger.warning("[%s] mail history unavailable: %s", PLUGIN_ID, exc)
+                return None
+            self._mail_history = history
+            return history
+
+    async def _begin_history_delivery(
+        self,
+        *,
+        settings: MailRelaySettings,
+        action: str,
+        mode: RecipientMode,
+        actor: ActorIdentity,
+        recipients: list[str],
+        content_format: MailContentFormat,
+    ) -> str | None:
+        history = await self._ensure_mail_history(settings)
+        if history is None:
+            return None
+        try:
+            return await history.begin_delivery(
+                action=action,
+                mode=mode,
+                content_format=content_format,
+                actor_id=actor.key,
+                recipients=recipients,
+                retention_days=settings.mail_history_retention_days,
+                max_records=settings.mail_history_max_records,
+            )
+        except MailHistoryError as exc:
+            logger.warning("[%s] history create failed: %s", PLUGIN_ID, exc)
+            return None
+
+    async def _finalize_history_delivery(
+        self,
+        history_id: str | None,
+        result: HistoryMessage,
+        settings: MailRelaySettings,
+    ) -> None:
+        if not history_id or self._mail_history is None:
+            return
+        try:
+            await self._mail_history.finalize_delivery(
+                history_id,
+                result,
+                retention_days=settings.mail_history_retention_days,
+                max_records=settings.mail_history_max_records,
+            )
+        except MailHistoryError as exc:
+            logger.warning("[%s] history finalize failed: %s", PLUGIN_ID, exc)
+
+    async def _update_webui_settings(self, updates: dict[str, Any]) -> set[str]:
+        if not updates:
+            raise ValueError("没有可保存的设置。")
+        unsupported = set(updates) - (
+            _WEBUI_BOOLEAN_SETTINGS | _WEBUI_INTEGER_SETTINGS | _WEBUI_LIST_SETTINGS
+        )
+        if unsupported:
+            raise ValueError("包含不允许从 WebUI 修改的配置项。")
+        for key in _WEBUI_BOOLEAN_SETTINGS & set(updates):
+            if not isinstance(updates[key], bool):
+                raise TypeError(f"{key} 必须是布尔值。")
+        for key in _WEBUI_INTEGER_SETTINGS & set(updates):
+            if isinstance(updates[key], bool) or not isinstance(updates[key], int):
+                raise TypeError(f"{key} 必须是整数。")
+        for key in _WEBUI_LIST_SETTINGS & set(updates):
+            if not isinstance(updates[key], list) or any(
+                not isinstance(value, str) for value in updates[key]
+            ):
+                raise ValueError(f"{key} 必须是字符串列表。")
+
+        candidate = dict(self.config)
+        candidate.update(updates)
+        normalized = load_settings(candidate)
+        changed: set[str] = set()
+        for key in updates:
+            value = getattr(normalized, key)
+            if isinstance(value, frozenset):
+                value = sorted(value)
+            if self.config.get(key) != value:
+                self.config[key] = value
+                changed.add(key)
+        saver = getattr(self.config, "save_config", None)
+        if changed and callable(saver):
+            saver()
+        return changed
+
+    def _webui_settings_payload(self, settings: MailRelaySettings) -> dict[str, Any]:
+        return {
+            "settings": {
+                "enabled": settings.enabled,
+                "enable_owner_delivery": settings.enable_owner_delivery,
+                "enable_self_delivery": settings.enable_self_delivery,
+                "enable_admin_other_delivery": settings.enable_admin_other_delivery,
+                "require_private_chat_for_self_delivery": (
+                    settings.require_private_chat_for_self_delivery
+                ),
+                "enable_html_mail": settings.enable_html_mail,
+                "sanitize_html_before_send": settings.sanitize_html_before_send,
+                "html_allow_links": settings.html_allow_links,
+                "html_allow_remote_images": settings.html_allow_remote_images,
+                "html_remote_image_allowed_domains": sorted(
+                    settings.html_remote_image_allowed_domains
+                ),
+                "max_html_body_chars": settings.max_html_body_chars,
+                "mail_history_enabled": settings.mail_history_enabled,
+                "mail_history_store_content": settings.mail_history_store_content,
+                "mail_history_retention_days": settings.mail_history_retention_days,
+                "mail_history_max_records": settings.mail_history_max_records,
+                "max_messages_per_hour": settings.max_messages_per_hour,
+                "max_successful_messages_per_actor_per_hour": (
+                    settings.max_successful_messages_per_actor_per_hour
+                ),
+                "max_delivery_attempts_per_actor_per_hour": (
+                    settings.max_delivery_attempts_per_actor_per_hour
+                ),
+                "actor_min_send_interval_seconds": (
+                    settings.actor_min_send_interval_seconds
+                ),
+            },
+            "restart_required_fields": ["enable_html_mail"],
+            "secret_fields": ["smtp_username", "smtp_password", "sender_address"],
+        }
 
     @filter.command("mailrelay_whoami", alias={"邮件身份"})
     async def mailrelay_whoami(self, event: AstrMessageEvent):
@@ -902,6 +1339,14 @@ class MailRelayGuardPlugin(Star):
                 ),
             )
         except MailRelayValidationError as exc:
+            await self._audit(
+                settings,
+                action=action,
+                outcome="blocked",
+                actor=actor,
+                recipients=recipients,
+                detail=type(exc).__name__,
+            )
             return f"邮件未发送：{exc}"
 
         if actor is None:
@@ -1011,6 +1456,14 @@ class MailRelayGuardPlugin(Star):
 
         # Attempts are charged before SMTP so failed logins cannot be hammered forever.
         self._actor_attempt_limiter.record(actor.key)
+        history_id = await self._begin_history_delivery(
+            settings=settings,
+            action=action,
+            mode=mode,
+            actor=actor,
+            recipients=recipients,
+            content_format="html" if html_body is not None else "plain",
+        )
         try:
             if html_body is None:
                 result = await self._smtp_client.send(
@@ -1028,6 +1481,15 @@ class MailRelayGuardPlugin(Star):
                     html_body=html_body,
                 )
         except MailRelayTransportError as exc:
+            await self._finalize_history_delivery(
+                history_id,
+                HistoryMessage(
+                    message_id=None,
+                    status="failed",
+                    error_code="transport_error",
+                ),
+                settings,
+            )
             await self._audit(
                 settings,
                 action=action,
@@ -1043,11 +1505,37 @@ class MailRelayGuardPlugin(Star):
         if accepted_count:
             self._global_success_limiter.record_success()
             self._actor_success_limiter.record(actor.key)
-        outcome = "succeeded" if result.is_complete else "partial"
+        history_status: Literal["submitted", "partial", "failed"]
+        audit_outcome: Literal["succeeded", "partial", "failed"]
+        if result.is_complete:
+            history_status = "submitted"
+            audit_outcome = "succeeded"
+        elif accepted_count:
+            history_status = "partial"
+            audit_outcome = "partial"
+        else:
+            history_status = "failed"
+            audit_outcome = "failed"
+        await self._finalize_history_delivery(
+            history_id,
+            HistoryMessage(
+                message_id=result.message_id,
+                status=history_status,
+                accepted_recipients=result.accepted_recipients,
+                refused_recipients=result.refused_recipients,
+                store_content=(
+                    settings.mail_history_store_content and accepted_count > 0
+                ),
+                subject=subject,
+                plain_body=body,
+                html_body=html_body,
+            ),
+            settings,
+        )
         await self._audit(
             settings,
             action=action,
-            outcome=outcome,
+            outcome=audit_outcome,
             actor=actor,
             recipients=recipients,
             detail=(
@@ -1109,6 +1597,8 @@ class MailRelayGuardPlugin(Star):
             f"- HTML 模板邮件：{'开启' if settings.enable_html_mail else '关闭'}",
             f"- HTML 邮件工具：{'已注册' if self._html_tools_registered else '未注册'}",
             f"- HTML 严格清洗：{'开启' if settings.sanitize_html_before_send else '关闭'}",
+            f"- WebUI 邮件历史：{'开启' if settings.mail_history_enabled else '关闭'}",
+            f"- WebUI 保存邮件内容：{'开启' if settings.mail_history_store_content else '关闭'}",
             f"- 自助发给自己：{'开启' if settings.enable_self_delivery else '关闭'}",
             f"- 管理员代发：{'开启' if settings.enable_admin_other_delivery else '关闭'}",
             f"- 管理员代发白名单：{'开启' if settings.restrict_admin_other_recipients else '关闭'}",
@@ -1155,6 +1645,11 @@ def _mask_email(value: str) -> str:
     if len(local) <= 1:
         return f"*@{domain}"
     return f"{local[0]}***@{domain}"
+
+
+def _is_hex_token(value: str, length: int) -> bool:
+    candidate = str(value or "")
+    return len(candidate) == length and all(char in "0123456789abcdef" for char in candidate)
 
 
 def _mailbox_source_label(source: str) -> str:

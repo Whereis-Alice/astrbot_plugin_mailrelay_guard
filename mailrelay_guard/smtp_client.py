@@ -77,11 +77,16 @@ class SMTPMailRelayClient:
         )
         try:
             with self._open_and_authenticate(settings) as smtp:
-                refused = smtp.send_message(
-                    message,
-                    from_addr=settings.sender_address,
-                    to_addrs=list(recipients),
-                )
+                try:
+                    refused = smtp.send_message(
+                        message,
+                        from_addr=settings.sender_address,
+                        to_addrs=list(recipients),
+                    )
+                except smtplib.SMTPRecipientsRefused as exc:
+                    # Preserve individual refusals so the local delivery mirror
+                    # can distinguish an SMTP rejection from a transport error.
+                    refused = exc.recipients
         except Exception as exc:  # smtplib subclasses vary by provider.
             raise self._to_transport_error(exc) from exc
 
@@ -90,8 +95,6 @@ class SMTPMailRelayClient:
         accepted = tuple(
             address for address in recipients if address.casefold() not in refused_keys
         )
-        if not accepted:
-            raise MailRelayTransportError("SMTP 服务器拒绝了全部收件人。")
         return DeliveryResult(
             message_id=str(message["Message-ID"]),
             accepted_recipients=accepted,

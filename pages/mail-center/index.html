@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Alice 邮件中心</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="mobile-bar">
+        <button id="mobile-nav-toggle" class="menu-button" type="button" aria-label="打开导航" aria-expanded="false">菜单</button>
+        <div class="mobile-brand"><span aria-hidden="true">AL</span><strong>邮件中心</strong></div>
+        <button id="mobile-refresh" class="text-icon-button" type="button">刷新</button>
+      </header>
+
+      <aside id="sidebar" class="sidebar" aria-label="邮件中心导航">
+        <div class="brand-lockup">
+          <span class="brand-mark" aria-hidden="true"><i></i><b></b></span>
+          <span class="brand-copy"><strong>ALICE</strong><small>MAILRELAY / GUARD</small></span>
+        </div>
+        <div class="brand-rule" aria-hidden="true"></div>
+
+        <nav class="side-nav" aria-label="功能导航">
+          <button class="nav-button active" type="button" data-view="overview" aria-current="page">
+            <span class="nav-index">01</span><span>运行概览</span>
+          </button>
+          <button class="nav-button" type="button" data-view="mailbox">
+            <span class="nav-index">02</span><span>邮件中心</span>
+          </button>
+          <button class="nav-button" type="button" data-view="settings">
+            <span class="nav-index">03</span><span>安全配置</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-bottom">
+          <div class="connection-label"><span>CONTROL CHANNEL</span><b id="sidebar-connection">读取中</b></div>
+          <div class="theme-control" role="group" aria-label="界面主题">
+            <button type="button" class="theme-option" data-theme="light" aria-pressed="false">日间</button>
+            <button type="button" class="theme-option" data-theme="dark" aria-pressed="true">夜间</button>
+          </div>
+          <p class="sidebar-note">受 AstrBot Dashboard 登录保护。SMTP 凭据不会显示在此页面。</p>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="page-header">
+          <div>
+            <p id="page-eyebrow" class="eyebrow">ALICE / MAILRELAY</p>
+            <h1 id="page-title">运行概览</h1>
+            <p id="page-subtitle" class="page-subtitle">查看 SMTP 就绪状态、近期投递和本地邮件归档。</p>
+          </div>
+          <div class="header-actions">
+            <span id="live-status" class="live-status">正在连接</span>
+            <button id="global-refresh" class="quiet-button" type="button">刷新数据</button>
+          </div>
+        </header>
+
+        <div id="notice" class="notice" role="status" hidden></div>
+
+        <section id="view-overview" class="view active" aria-labelledby="page-title">
+          <section id="readiness-banner" class="readiness-banner" aria-live="polite">
+            <div class="readiness-signal" aria-hidden="true"><span></span></div>
+            <div>
+              <p class="section-kicker">DELIVERY READINESS</p>
+              <h2 id="readiness-title">正在读取 SMTP 配置</h2>
+              <p id="readiness-copy">页面只显示配置状态，不会读取或展示 SMTP 授权码。</p>
+            </div>
+            <button id="probe-smtp" class="primary-button" type="button">测试 SMTP 登录</button>
+          </section>
+
+          <section class="metric-grid" aria-label="投递统计">
+            <article class="metric-card"><span>今日投递</span><strong id="metric-today-total">-</strong><small id="metric-today-hint">读取历史中</small></article>
+            <article class="metric-card success"><span>SMTP 已接受</span><strong id="metric-accepted">-</strong><small>今日至少接受一位收件人的投递</small></article>
+            <article class="metric-card warning"><span>异常投递</span><strong id="metric-errors">-</strong><small>失败、部分接受或状态未知</small></article>
+            <article class="metric-card accent"><span>HTML 记录</span><strong id="metric-html">-</strong><small>仅统计本地归档中的格式</small></article>
+          </section>
+
+          <div class="overview-layout">
+            <section class="tool-surface latest-surface">
+              <header class="surface-heading">
+                <div><p class="section-kicker">RECENT ACTIVITY</p><h2>近期投递</h2></div>
+                <button class="quiet-button" type="button" data-open-mailbox="sent">打开邮件中心</button>
+              </header>
+              <div id="recent-list" class="recent-list" aria-live="polite"></div>
+            </section>
+
+            <section class="tool-surface guard-surface">
+              <header class="surface-heading"><div><p class="section-kicker">GUARD RAILS</p><h2>当前防护</h2></div></header>
+              <dl id="guard-summary" class="guard-summary"></dl>
+              <div class="guard-footnote">收件人权限、HTML 清洗和限流始终在服务端执行。</div>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-mailbox" class="view" aria-label="邮件中心">
+          <section class="mailbox-toolbar">
+            <div class="folder-tabs" role="tablist" aria-label="邮件视图">
+              <button class="folder-tab active" type="button" data-folder="sent" role="tab" aria-selected="true">发件箱</button>
+              <button class="folder-tab" type="button" data-folder="inbox" role="tab" aria-selected="false">本地投递副本</button>
+              <button class="folder-tab" type="button" data-folder="errors" role="tab" aria-selected="false">投递异常</button>
+            </div>
+            <div class="mailbox-actions">
+              <label class="search-field"><span class="sr-only">搜索邮件</span><input id="message-search" type="search" placeholder="搜索主题、模式、脱敏地址或域名" autocomplete="off" /></label>
+              <button id="message-search-button" class="quiet-button" type="button">搜索</button>
+              <button id="messages-refresh" class="quiet-button" type="button">刷新</button>
+            </div>
+          </section>
+
+          <p id="mailbox-disclaimer" class="mailbox-disclaimer">发件箱保存本地投递尝试。默认只保留脱敏元数据；开启内容归档后才可查看主题和正文。</p>
+
+          <section class="filter-bar" aria-label="邮件筛选">
+            <label>状态<select id="message-status"><option value="">全部状态</option><option value="submitted">已提交</option><option value="partial">部分接受</option><option value="failed">失败</option><option value="unknown">状态未知</option></select></label>
+            <label>格式<select id="message-format"><option value="">全部格式</option><option value="plain">纯文本</option><option value="html">HTML</option></select></label>
+            <button id="clear-filters" class="link-button" type="button">清除筛选</button>
+            <span id="message-count" class="result-count">-</span>
+          </section>
+
+          <div class="mailbox-grid">
+            <section class="message-list-pane" aria-label="邮件记录列表">
+              <div id="message-list" class="message-list" aria-live="polite"></div>
+              <div class="pagination" aria-label="邮件分页">
+                <button id="messages-previous" class="quiet-button" type="button">上一页</button>
+                <span id="messages-page">第 1 页</span>
+                <button id="messages-next" class="quiet-button" type="button">下一页</button>
+              </div>
+            </section>
+
+            <section id="message-detail" class="message-detail" aria-live="polite">
+              <div class="detail-empty"><span>MAIL</span><h2>选择一封邮件</h2><p>详情只在打开记录时加载。主题、正文和 HTML 是否可见，取决于本地内容归档设置。</p></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-settings" class="view" aria-label="安全配置">
+          <section class="credential-banner">
+            <div>
+              <p class="section-kicker">SMTP CREDENTIALS</p>
+              <h2>凭据仍在 AstrBot 原生配置面板管理</h2>
+              <p id="credential-summary">此页面不会读取账号、发件地址或授权码。可在这里测试当前连接并调整非敏感运行策略。</p>
+            </div>
+            <button id="settings-probe-smtp" class="quiet-button" type="button">测试连接</button>
+          </section>
+
+          <form id="settings-form" class="settings-form">
+            <section class="settings-section">
+              <header class="surface-heading"><div><p class="section-kicker">RECIPIENT POLICY</p><h2>投递权限</h2><p>这些开关不会改变管理者白名单；白名单、主人邮箱和 SMTP 凭据请在原生插件配置中维护。</p></div></header>
+              <div class="setting-grid">
+                <label class="switch-field"><input id="setting-enabled" name="enabled" type="checkbox" /><span><strong>启用邮件中继</strong><small>关闭后不会接受任何邮件投递请求。</small></span></label>
+                <label class="switch-field"><input id="setting-enable-owner-delivery" name="enable_owner_delivery" type="checkbox" /><span><strong>允许主人通知</strong><small>仅已配置的主人管理员可使用。</small></span></label>
+                <label class="switch-field"><input id="setting-enable-self-delivery" name="enable_self_delivery" type="checkbox" /><span><strong>允许用户发给自己</strong><small>只使用当前用户已解析或验证的邮箱。</small></span></label>
+                <label class="switch-field"><input id="setting-enable-admin-other-delivery" name="enable_admin_other_delivery" type="checkbox" /><span><strong>允许管理员代发</strong><small>仅配置的 AstrBot 管理员可以指定第三方收件人。</small></span></label>
+                <label class="switch-field"><input id="setting-private-self" name="require_private_chat_for_self_delivery" type="checkbox" /><span><strong>自助投递仅限私聊</strong><small>建议保持开启，避免群内误触发。</small></span></label>
+              </div>
+            </section>
+
+            <section class="settings-section">
+              <header class="surface-heading"><div><p class="section-kicker">HTML SAFETY</p><h2>HTML 模板与清洗</h2><p>无论这里如何设置，脚本、表单、危险 URL 和主动内容都会被移除。HTML 工具注册开关保存后需要重载插件。</p></div></header>
+              <div class="setting-grid form-grid">
+                <label class="switch-field"><input id="setting-enable-html" name="enable_html_mail" type="checkbox" /><span><strong>允许 HTML 模板邮件</strong><small>保存后重载插件才会注册或移除 HTML 工具。</small></span></label>
+                <label class="switch-field"><input id="setting-sanitize-html" name="sanitize_html_before_send" type="checkbox" /><span><strong>发送前严格清洗</strong><small>建议保持开启，收紧允许的内联样式。</small></span></label>
+                <label class="switch-field"><input id="setting-html-links" name="html_allow_links" type="checkbox" /><span><strong>允许 HTTPS 链接</strong><small>关闭时 HTML 中的所有链接都会被移除。</small></span></label>
+                <label class="switch-field"><input id="setting-html-images" name="html_allow_remote_images" type="checkbox" /><span><strong>允许远程图片</strong><small>收件人打开邮件时可能向第三方暴露网络信息。</small></span></label>
+                <label class="form-field full"><span>远程图片精确域名白名单</span><textarea id="setting-html-domains" name="html_remote_image_allowed_domains" rows="3" placeholder="每行一个主机名，例如 cdn.example.com"></textarea><small>仅在允许远程图片时生效；WebUI 预览仍不会加载远程图片。</small></label>
+                <label class="form-field"><span>HTML 源码上限（字符）</span><input id="setting-html-max" name="max_html_body_chars" type="number" min="1" max="200000" /></label>
+              </div>
+            </section>
+
+            <section class="settings-section split-settings">
+              <div>
+                <header class="surface-heading"><div><p class="section-kicker">LOCAL ARCHIVE</p><h2>本地邮件归档</h2><p>归档仅用于该插件 Dashboard。它不是邮箱服务商的收件箱，也不会从 IMAP 或 POP3 拉取邮件。</p></div></header>
+                <div class="setting-grid form-grid">
+                  <label class="switch-field"><input id="setting-history-enabled" name="mail_history_enabled" type="checkbox" /><span><strong>记录投递历史</strong><small>默认仅保存脱敏地址、时间、模式和 SMTP 接受状态。</small></span></label>
+                  <label class="switch-field sensitive-switch"><input id="setting-history-content" name="mail_history_store_content" type="checkbox" /><span><strong>保存主题和正文</strong><small>会把已清洗的内容保存在本机 SQLite 数据库，受 Dashboard 登录保护。</small></span></label>
+                  <label class="form-field"><span>保留天数</span><input id="setting-history-retention" name="mail_history_retention_days" type="number" min="1" max="3650" /></label>
+                  <label class="form-field"><span>最大记录数</span><input id="setting-history-max" name="mail_history_max_records" type="number" min="20" max="5000" /></label>
+                </div>
+              </div>
+              <aside class="danger-zone" aria-label="危险操作">
+                <p class="section-kicker">DESTRUCTIVE ACTION</p><h3>清空本地邮件历史</h3>
+                <p>会删除本插件 SQLite 归档中的投递记录和本地投递副本状态，不影响邮箱服务商中已经收到的邮件。</p>
+                <button id="clear-history" class="danger-button" type="button">清空本地历史</button>
+              </aside>
+            </section>
+
+            <section class="settings-section">
+              <header class="surface-heading"><div><p class="section-kicker">RATE LIMITS</p><h2>限流阈值</h2><p>限流记录仅保留在内存中，重载插件后会重置。尝试上限包含 SMTP 失败，防止错误授权码被反复尝试。</p></div></header>
+              <div class="number-grid">
+                <label class="form-field"><span>全局每小时成功投递</span><input id="setting-global-hour" name="max_messages_per_hour" type="number" min="1" max="1000" /></label>
+                <label class="form-field"><span>单用户每小时成功投递</span><input id="setting-actor-success-hour" name="max_successful_messages_per_actor_per_hour" type="number" min="1" max="100" /></label>
+                <label class="form-field"><span>单用户每小时尝试</span><input id="setting-actor-attempt-hour" name="max_delivery_attempts_per_actor_per_hour" type="number" min="1" max="200" /></label>
+                <label class="form-field"><span>同一用户冷却（秒）</span><input id="setting-actor-cooldown" name="actor_min_send_interval_seconds" type="number" min="0" max="3600" /></label>
+              </div>
+            </section>
+
+            <footer class="settings-footer"><p id="settings-status">非敏感设置尚未加载。</p><button id="save-settings" class="primary-button" type="submit">保存安全配置</button></footer>
+          </form>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="confirm-dialog" class="confirm-dialog">
+      <form method="dialog">
+        <p class="section-kicker">CONFIRM ACTION</p>
+        <h2 id="confirm-title">确认操作</h2>
+        <p id="confirm-copy"></p>
+        <div class="dialog-actions"><button id="confirm-cancel" class="quiet-button" value="cancel">取消</button><button id="confirm-accept" class="danger-button" value="confirm">确认清空</button></div>
+      </form>
+    </dialog>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

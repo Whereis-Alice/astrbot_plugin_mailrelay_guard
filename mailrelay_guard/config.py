@@ -67,6 +67,10 @@ class MailRelaySettings:
     html_allow_remote_images: bool
     html_remote_image_allowed_domains: frozenset[str]
     max_html_body_chars: int
+    mail_history_enabled: bool
+    mail_history_store_content: bool
+    mail_history_retention_days: int
+    mail_history_max_records: int
     max_messages_per_hour: int
     max_successful_messages_per_actor_per_hour: int
     max_delivery_attempts_per_actor_per_hour: int
@@ -267,6 +271,28 @@ def load_settings(config: Mapping[str, Any] | Any | None) -> MailRelaySettings:
             30000,
             minimum=1,
             maximum=200000,
+        ),
+        mail_history_enabled=_as_bool(
+            _get(config, "mail_history_enabled", True),
+            True,
+            invalid_default=True,
+        ),
+        mail_history_store_content=_as_bool(
+            _get(config, "mail_history_store_content", False),
+            False,
+            invalid_default=False,
+        ),
+        mail_history_retention_days=_as_int(
+            _get(config, "mail_history_retention_days", 30),
+            30,
+            minimum=1,
+            maximum=3650,
+        ),
+        mail_history_max_records=_as_int(
+            _get(config, "mail_history_max_records", 500),
+            500,
+            minimum=20,
+            maximum=5000,
         ),
         max_messages_per_hour=_as_int(
             _get(config, "max_messages_per_hour", 30),
