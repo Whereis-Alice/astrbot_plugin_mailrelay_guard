@@ -12,6 +12,7 @@ const state = {
   selectedItem: null,
   selectedDetail: null,
   detailTab: "plain",
+  previewZoom: 1.15,
   demo: !pluginBridge,
 };
 
@@ -279,6 +280,7 @@ function settingsValue(id) {
 
 function showView(view) {
   state.activeView = view;
+  document.body.dataset.activeView = view;
   all(".view").forEach((element) => element.classList.toggle("active", element.id === `view-${view}`));
   all(".nav-button").forEach((element) => {
     const active = element.dataset.view === view;
@@ -464,7 +466,8 @@ function metadataCell(label, value) {
 }
 
 function previewDocument(html) {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'none'; style-src 'unsafe-inline'; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'"><style>html{background:#fff;color:#172039}body{max-width:760px;margin:0 auto;padding:20px;line-height:1.6;overflow-wrap:anywhere}table{max-width:100%!important}img{display:none!important}</style></head><body>${html}</body></html>`;
+  const zoom = Math.min(1.45, Math.max(0.9, Number(state.previewZoom) || 1));
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'none'; style-src 'unsafe-inline'; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'"><style>html{min-height:100%;background:#fff;color:#172039}body{box-sizing:border-box;min-height:100%;width:${100 / zoom}%;margin:0;padding:28px;line-height:1.65;overflow-wrap:anywhere;zoom:${zoom}}table{max-width:100%!important}img{display:none!important}</style></head><body>${html}</body></html>`;
 }
 
 function renderDetailContent(container, detail) {
@@ -521,13 +524,17 @@ function renderMessageDetail(detail) {
   top.append(topRow);
   root.append(top);
 
+  const facts = create("details", "delivery-facts");
+  const factsSummary = create("summary", "", `投递信息 · ${detail.recipient_count || 0} 位收件人 · SMTP ${detail.accepted_count || 0} / ${detail.recipient_count || 0}`);
+  facts.append(factsSummary);
+  const factsContent = create("div", "delivery-facts-content");
   const metadata = create("div", "detail-metadata");
   metadata.append(
     metadataCell("投递模式", modeNames[detail.mode] || detail.mode || "--"),
     metadataCell("SMTP 接受", `${detail.accepted_count || 0} / ${detail.recipient_count || 0}`),
     metadataCell("拒绝 / 错误", detail.refused_count ? `${detail.refused_count} 位被拒绝` : detail.error_code || "无"),
   );
-  root.append(metadata);
+  factsContent.append(metadata);
 
   const recipientArea = create("section", "recipient-area");
   recipientArea.append(create("h3", "", "脱敏收件人"));
@@ -539,7 +546,9 @@ function renderMessageDetail(detail) {
   });
   if (!recipientList.childElementCount) recipientList.append(create("span", "recipient-item", "没有收件人信息"));
   recipientArea.append(recipientList);
-  root.append(recipientArea);
+  factsContent.append(recipientArea);
+  facts.append(factsContent);
+  root.append(facts);
 
   const recipient = state.selectedItem?.recipient;
   if (state.folder === "inbox" && recipient) {
@@ -566,6 +575,28 @@ function renderMessageDetail(detail) {
     tab.addEventListener("click", () => { state.detailTab = key; renderMessageDetail(state.selectedDetail); });
     tabs.append(tab);
   });
+  if (detail.html_preview) {
+    const zoomControl = create("label", "reader-zoom");
+    zoomControl.append(create("span", "", "阅读尺寸"));
+    const range = create("input");
+    range.type = "range";
+    range.min = "90";
+    range.max = "145";
+    range.step = "5";
+    range.value = String(Math.round(state.previewZoom * 100));
+    range.setAttribute("aria-label", "HTML 邮件阅读尺寸");
+    const output = create("output", "", `${range.value}%`);
+    range.addEventListener("input", () => {
+      state.previewZoom = Number(range.value) / 100;
+      output.textContent = `${range.value}%`;
+      const frame = query("#message-detail .mail-preview-frame");
+      if (frame && state.selectedDetail?.html_preview) {
+        frame.srcdoc = previewDocument(state.selectedDetail.html_preview);
+      }
+    });
+    zoomControl.append(range, output);
+    tabs.append(zoomControl);
+  }
   root.append(tabs);
   const content = create("div", "detail-content");
   renderDetailContent(content, detail);

@@ -1,8 +1,8 @@
 name: astrbot_plugin_mailrelay_guard
 display_name: MailRelay Guard（邮件中继防护）
-desc: 为 Alice 提供受策略约束的 SMTP 与 HTML 模板邮件，并附带 Dashboard 邮件中心、本地投递副本和安全预览。
-short_desc: 支持 QQ/NapCat 邮箱解析、HTML 清洗、脱敏邮件历史和服务端收件人权限校验。
-version: v1.3.0
+desc: 为 Alice 提供受策略约束的 SMTP 与 HTML 模板邮件，并附带阅读优先的 Dashboard 邮件中心、本地投递副本和安全预览。
+short_desc: 支持 QQ/NapCat 邮箱解析、HTML 清洗、脱敏邮件历史、可调预览和服务端收件人权限校验。
+version: v1.3.1
 author: Huli3
 repo: https://github.com/Whereis-Alice/astrbot_plugin_mailrelay_guard
 astrbot_version: ">=4.27.2,<5"
