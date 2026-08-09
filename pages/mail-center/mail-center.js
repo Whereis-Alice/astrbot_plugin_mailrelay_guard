@@ -14,6 +14,7 @@ const state = {
   detailTab: "plain",
   previewZoom: 1.2,
   readerZen: false,
+  readerFullscreen: false,
   demo: !pluginBridge,
 };
 
@@ -67,7 +68,7 @@ const mockSettings = {
 };
 
 const mockSummary = {
-  version: "v1.3.3",
+  version: "v1.3.4",
   readiness: "ready",
   configuration_problems: [],
   smtp: { host: "smtp.163.com", port: 465, security: "ssl", account_configured: true, sender_configured: true },
@@ -276,13 +277,45 @@ function setConnection(mode, text) {
 
 function syncReaderFocusMode() {
   const canFocus = state.activeView === "mailbox" && Boolean(state.selectedItem);
-  const button = byId("reader-focus-toggle");
-  if (!canFocus) state.readerZen = false;
+  const focusButton = byId("reader-focus-toggle");
+  const fullscreenButton = byId("reader-fullscreen-toggle");
+  if (!canFocus) {
+    state.readerZen = false;
+    state.readerFullscreen = false;
+  }
   document.body.classList.toggle("mail-reader-active", canFocus);
   document.body.classList.toggle("mail-reader-zen", canFocus && state.readerZen);
-  button.hidden = !canFocus;
-  button.setAttribute("aria-pressed", String(canFocus && state.readerZen));
-  button.textContent = state.readerZen ? "显示列表" : "专注阅读";
+  document.body.classList.toggle("mail-reader-fullscreen", canFocus && state.readerFullscreen);
+  focusButton.hidden = !canFocus;
+  focusButton.setAttribute("aria-pressed", String(canFocus && state.readerZen));
+  focusButton.textContent = state.readerZen ? "显示列表" : "专注阅读";
+  fullscreenButton.hidden = !canFocus;
+  fullscreenButton.setAttribute("aria-pressed", String(canFocus && state.readerFullscreen));
+  fullscreenButton.textContent = state.readerFullscreen ? "退出全屏" : "全屏阅读";
+}
+
+async function toggleReaderFullscreen() {
+  if (state.activeView !== "mailbox" || !state.selectedItem) return;
+  const entering = !state.readerFullscreen;
+  state.readerFullscreen = entering;
+  syncReaderFocusMode();
+  if (entering) {
+    if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+      try {
+        await document.documentElement.requestFullscreen();
+      } catch (_) {
+        // AstrBot may disallow native fullscreen inside an embedded Page; CSS focus remains available.
+      }
+    }
+    return;
+  }
+  if (document.fullscreenElement && document.exitFullscreen) {
+    try {
+      await document.exitFullscreen();
+    } catch (_) {
+      // The visual fallback has already been removed.
+    }
+  }
 }
 
 function settingsValue(id) {
@@ -436,14 +469,17 @@ function renderMessageList(payload) {
     const row = create("button", "message-row", "");
     row.type = "button";
     row.dataset.messageId = item.id;
+    const title = messageTitle(item);
+    row.title = title;
+    row.setAttribute("aria-label", `${title}，${recipientText(item)}，${formatTime(item.created_at, false)}`);
     if (state.selectedItem?.id === item.id && (!item.recipient || state.selectedItem?.recipient?.token === item.recipient.token)) row.classList.add("active");
     if (state.folder === "inbox" && !item.is_read) row.classList.add("unread");
-    const main = create("div");
-    main.append(create("div", "message-row-title", messageTitle(item)), create("div", "message-row-recipient", recipientText(item)));
-    const meta = create("div", "message-row-meta");
-    meta.append(statusBadge(item.status), formatBadge(item.content_format));
-    meta.append(create("span", "", formatTime(item.created_at, false)));
-    row.append(main, meta);
+    const main = create("div", "message-row-main");
+    main.append(create("div", "message-row-title", title));
+    const footer = create("div", "message-row-footer");
+    footer.append(create("div", "message-row-recipient", recipientText(item)), create("time", "message-row-time", formatTime(item.created_at, false)));
+    main.append(footer);
+    row.append(main);
     row.addEventListener("click", () => { void selectMessage(item); });
     container.append(row);
   });
@@ -467,8 +503,11 @@ function renderDetailEmpty() {
   const detail = clear(byId("message-detail"));
   query(".mailbox-grid")?.classList.remove("detail-open");
   state.readerZen = false;
-  document.body.classList.remove("mail-reader-active", "mail-reader-zen");
+  state.readerFullscreen = false;
+  document.body.classList.remove("mail-reader-active", "mail-reader-zen", "mail-reader-fullscreen");
   byId("reader-focus-toggle").hidden = true;
+  byId("reader-fullscreen-toggle").hidden = true;
+  if (document.fullscreenElement && document.exitFullscreen) void document.exitFullscreen().catch(() => {});
   detail.classList.remove("open");
   const empty = create("div", "detail-empty");
   empty.append(create("span", "", "MAIL"), create("h2", "", "选择一封邮件"), create("p", "", "详情只在打开记录时加载。主题、正文和 HTML 是否可见，取决于本地内容归档设置。"));
@@ -856,6 +895,13 @@ function attachEvents() {
   byId("reader-focus-toggle").addEventListener("click", () => {
     state.readerZen = !state.readerZen;
     syncReaderFocusMode();
+  });
+  byId("reader-fullscreen-toggle").addEventListener("click", () => { void toggleReaderFullscreen(); });
+  document.addEventListener("fullscreenchange", () => {
+    if (!document.fullscreenElement && state.readerFullscreen) {
+      state.readerFullscreen = false;
+      syncReaderFocusMode();
+    }
   });
   byId("messages-refresh").addEventListener("click", () => { void loadMailbox(); });
   byId("message-search-button").addEventListener("click", () => { state.offset = 0; void loadMailbox(); });
