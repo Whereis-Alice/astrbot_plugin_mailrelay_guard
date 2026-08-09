@@ -12,7 +12,7 @@ const state = {
   selectedItem: null,
   selectedDetail: null,
   detailTab: "plain",
-  previewZoom: 1.15,
+  previewZoom: 1.2,
   demo: !pluginBridge,
 };
 

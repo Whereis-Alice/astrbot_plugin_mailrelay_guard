@@ -95,30 +95,32 @@
         </section>
 
         <section id="view-mailbox" class="view" aria-label="邮件中心">
-          <section class="mailbox-toolbar">
-            <div class="folder-tabs" role="tablist" aria-label="邮件视图">
-              <button class="folder-tab active" type="button" data-folder="sent" role="tab" aria-selected="true">发件箱</button>
-              <button class="folder-tab" type="button" data-folder="inbox" role="tab" aria-selected="false">本地投递副本</button>
-              <button class="folder-tab" type="button" data-folder="errors" role="tab" aria-selected="false">投递异常</button>
-            </div>
-            <div class="mailbox-actions">
-              <label class="search-field"><span class="sr-only">搜索邮件</span><input id="message-search" type="search" placeholder="搜索主题、模式、脱敏地址或域名" autocomplete="off" /></label>
-              <button id="message-search-button" class="quiet-button" type="button">搜索</button>
-              <button id="messages-refresh" class="quiet-button" type="button">刷新</button>
-            </div>
-          </section>
-
-          <p id="mailbox-disclaimer" class="mailbox-disclaimer">发件箱保存本地投递尝试。默认只保留脱敏元数据；开启内容归档后才可查看主题和正文。</p>
-
-          <section class="filter-bar" aria-label="邮件筛选">
-            <label>状态<select id="message-status"><option value="">全部状态</option><option value="submitted">已提交</option><option value="partial">部分接受</option><option value="failed">失败</option><option value="unknown">状态未知</option></select></label>
-            <label>格式<select id="message-format"><option value="">全部格式</option><option value="plain">纯文本</option><option value="html">HTML</option></select></label>
-            <button id="clear-filters" class="link-button" type="button">清除筛选</button>
-            <span id="message-count" class="result-count">-</span>
-          </section>
-
           <div class="mailbox-grid">
             <section class="message-list-pane" aria-label="邮件记录列表">
+              <div class="mailbox-list-controls">
+                <section class="mailbox-toolbar">
+                  <div class="folder-tabs" role="tablist" aria-label="邮件视图">
+                    <button class="folder-tab active" type="button" data-folder="sent" role="tab" aria-selected="true">发件箱</button>
+                    <button class="folder-tab" type="button" data-folder="inbox" role="tab" aria-selected="false">本地投递副本</button>
+                    <button class="folder-tab" type="button" data-folder="errors" role="tab" aria-selected="false">投递异常</button>
+                  </div>
+                  <div class="mailbox-actions">
+                    <label class="search-field"><span class="sr-only">搜索邮件</span><input id="message-search" type="search" placeholder="搜索主题、模式、脱敏地址或域名" autocomplete="off" /></label>
+                    <button id="message-search-button" class="quiet-button" type="button">搜索</button>
+                    <button id="messages-refresh" class="quiet-button" type="button">刷新</button>
+                  </div>
+                </section>
+
+                <p id="mailbox-disclaimer" class="mailbox-disclaimer">发件箱保存本地投递尝试。默认只保留脱敏元数据；开启内容归档后才可查看主题和正文。</p>
+
+                <section class="filter-bar" aria-label="邮件筛选">
+                  <label>状态<select id="message-status"><option value="">全部状态</option><option value="submitted">已提交</option><option value="partial">部分接受</option><option value="failed">失败</option><option value="unknown">状态未知</option></select></label>
+                  <label>格式<select id="message-format"><option value="">全部格式</option><option value="plain">纯文本</option><option value="html">HTML</option></select></label>
+                  <button id="clear-filters" class="link-button" type="button">清除筛选</button>
+                  <span id="message-count" class="result-count">-</span>
+                </section>
+              </div>
+
               <div id="message-list" class="message-list" aria-live="polite"></div>
               <div class="pagination" aria-label="邮件分页">
                 <button id="messages-previous" class="quiet-button" type="button">上一页</button>
