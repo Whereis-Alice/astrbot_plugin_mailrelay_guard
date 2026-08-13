@@ -33,7 +33,7 @@ MailRelay Guard 是为 Alice 一类 AstrBot 助手准备的 SMTP 邮件插件。
 
 也可以回复一条包含图片或文件的旧消息，再让爱丽丝发送。AstrBot/NapCat 会把引用消息解析到 `Reply.chain`，插件从标准 `Image` 和 `File` 组件取媒体，不需要额外填写 NapCat 地址或 Token。
 
-爱丽丝在当前会话工作区生成了报告、表格或图片时，可以通过工具的 `attachment_paths` 附加它们。路径只允许位于当前会话工作区或 AstrBot 临时目录；沙箱运行时只允许 `/workspace`。普通用户即使要求附加文件，收件人仍然只能是自己的已解析或已验证邮箱；只有管理员代发工具能指定别人。
+爱丽丝在当前会话工作区生成了报告、表格或图片时，可以通过工具的 `attachment_paths` 附加它们。路径只允许位于当前会话工作区、当前事件已登记的临时文件，或沙箱中的 `/workspace`；不会读取任意服务器路径。普通用户即使要求附加文件，收件人仍然只能是自己的已解析或已验证邮箱；只有管理员代发工具能指定别人。
 
 HTML 邮件可以让爱丽丝在模板中使用图片占位符：
 
@@ -346,7 +346,7 @@ HTML 邮件会以 `multipart/alternative` 格式同时发送 HTML 与纯文本�
 
 ### QQ 文件或图片读取失败
 
-确认消息确实包含 AstrBot 标准 `Image`/`File` 组件，或回复了包含媒体的消息。NapCat 只负责把媒体交给 AstrBot，插件不会自行调用一个固定的 NapCat HTTP 地址。检查 `allow_message_images`、`allow_message_files`、附件大小上限和读取超时；超过任一限制时会拒绝整封邮件。
+确认消息确实包含 AstrBot 标准 `Image`/`File` 组件，或回复了包含媒体的消息。NapCat 只负责把媒体交给 AstrBot，插件不会自行调用一个固定的 NapCat HTTP 地址。检查 `allow_message_images`、`allow_message_files`、附件大小上限和读取超时；超过任一限制时会拒绝整封邮件。若是爱丽丝刚生成的文件，请把工具返回的工作区路径传给 `attachment_paths`；运行时关闭时，只有当前事件已登记的临时文件路径可用。
 
 ### NapCat 需要额外配置
 
