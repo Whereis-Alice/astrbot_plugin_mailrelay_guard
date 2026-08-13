@@ -411,6 +411,23 @@ async def _resolve_workspace_file(
             raise MailRelayValidationError("工作区附件路径不是普通文件。")
         return str(resolved), False
 
+    # A generated image/file may be a host-local temporary path even when the
+    # computer-use runtime is disabled.  Permit it only when AstrBot explicitly
+    # registered the path on the current event; arbitrary absolute paths remain
+    # rejected below.
+    event = getattr(getattr(context, "context", None), "event", None)
+    tracked_temp_paths = {
+        Path(str(value)).resolve(strict=False)
+        for value in (getattr(event, "_temporary_local_files", None) or ())
+        if str(value or "").strip()
+    }
+    try:
+        candidate = Path(raw_path).resolve(strict=True)
+    except (OSError, RuntimeError):
+        candidate = None
+    if candidate is not None and candidate in tracked_temp_paths and candidate.is_file():
+        return str(candidate), False
+
     remote_path = _safe_sandbox_path(raw_path)
     from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 

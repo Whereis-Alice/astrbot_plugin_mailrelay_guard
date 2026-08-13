@@ -33,6 +33,9 @@ class FakeEvent:
 class FakeToolEvent:
     unified_msg_origin = "aiocqhttp:friend:10001"
 
+    def __init__(self, temporary_paths=()) -> None:
+        self._temporary_local_files = list(temporary_paths)
+
 
 class FakeToolContext:
     def __init__(self, *, event=None) -> None:
@@ -95,6 +98,28 @@ class MediaAttachmentTests(unittest.TestCase):
                 self.assertEqual(attachments[0].content_type, "image/png")
                 self.assertEqual(attachments[0].filename, "image_1.png")
                 self.assertEqual(attachments[1].filename, "报告.txt")
+
+        asyncio.run(scenario())
+
+    def test_allows_an_event_tracked_temp_file_when_runtime_is_disabled(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as temporary_dir:
+                report = Path(temporary_dir) / "generated.txt"
+                report.write_text("generated", encoding="utf-8")
+                tool_event = FakeToolEvent([str(report)])
+                context = FakeToolContext(event=tool_event)
+                with patch(
+                    "astrbot.core.tools.computer_tools.util.is_local_runtime",
+                    return_value=False,
+                ):
+                    attachments = await collect_mail_attachments(
+                        context=context,
+                        event=FakeEvent([]),
+                        settings=settings(),
+                        include_message_media=False,
+                        workspace_file_paths=[str(report)],
+                    )
+                self.assertEqual(attachments[0].filename, "generated.txt")
 
         asyncio.run(scenario())
 
