@@ -67,6 +67,16 @@ class MailRelaySettings:
     html_allow_remote_images: bool
     html_remote_image_allowed_domains: frozenset[str]
     max_html_body_chars: int
+    enable_attachments: bool
+    allow_message_images: bool
+    allow_message_files: bool
+    allow_workspace_attachments: bool
+    enable_inline_images: bool
+    max_attachments_per_message: int
+    max_attachment_size_mb: int
+    max_total_attachment_size_mb: int
+    attachment_fetch_timeout_seconds: int
+    blocked_attachment_extensions: frozenset[str]
     mail_history_enabled: bool
     mail_history_store_content: bool
     mail_history_retention_days: int
@@ -78,6 +88,14 @@ class MailRelaySettings:
     max_tracked_actors: int
     audit_log_enabled: bool
     audit_max_file_kb: int
+
+    @property
+    def max_attachment_bytes(self) -> int:
+        return self.max_attachment_size_mb * 1024 * 1024
+
+    @property
+    def max_total_attachment_bytes(self) -> int:
+        return self.max_total_attachment_size_mb * 1024 * 1024
 
 
 def load_settings(config: Mapping[str, Any] | Any | None) -> MailRelaySettings:
@@ -272,6 +290,83 @@ def load_settings(config: Mapping[str, Any] | Any | None) -> MailRelaySettings:
             minimum=1,
             maximum=200000,
         ),
+        enable_attachments=_as_bool(
+            _get(config, "enable_attachments", True),
+            True,
+            invalid_default=False,
+        ),
+        allow_message_images=_as_bool(
+            _get(config, "allow_message_images", True),
+            True,
+            invalid_default=False,
+        ),
+        allow_message_files=_as_bool(
+            _get(config, "allow_message_files", True),
+            True,
+            invalid_default=False,
+        ),
+        allow_workspace_attachments=_as_bool(
+            _get(config, "allow_workspace_attachments", True),
+            True,
+            invalid_default=False,
+        ),
+        enable_inline_images=_as_bool(
+            _get(config, "enable_inline_images", True),
+            True,
+            invalid_default=False,
+        ),
+        max_attachments_per_message=_as_int(
+            _get(config, "max_attachments_per_message", 6),
+            6,
+            minimum=1,
+            maximum=20,
+        ),
+        max_attachment_size_mb=_as_int(
+            _get(config, "max_attachment_size_mb", 10),
+            10,
+            minimum=1,
+            maximum=50,
+        ),
+        max_total_attachment_size_mb=_as_int(
+            _get(config, "max_total_attachment_size_mb", 20),
+            20,
+            minimum=1,
+            maximum=100,
+        ),
+        attachment_fetch_timeout_seconds=_as_int(
+            _get(config, "attachment_fetch_timeout_seconds", 20),
+            20,
+            minimum=5,
+            maximum=120,
+        ),
+        blocked_attachment_extensions=frozenset(
+            _normalize_extensions(
+                _as_list(
+                    _get(
+                        config,
+                        "blocked_attachment_extensions",
+                        [
+                            ".bat",
+                            ".cmd",
+                            ".com",
+                            ".cpl",
+                            ".exe",
+                            ".hta",
+                            ".js",
+                            ".jse",
+                            ".lnk",
+                            ".msi",
+                            ".ps1",
+                            ".reg",
+                            ".scr",
+                            ".vbe",
+                            ".vbs",
+                            ".wsf",
+                        ],
+                    )
+                )
+            )
+        ),
         mail_history_enabled=_as_bool(
             _get(config, "mail_history_enabled", True),
             True,
@@ -458,6 +553,19 @@ def _normalize_hostnames(values: list[str]) -> list[str]:
         hostname = value.strip().casefold().rstrip(".")
         if hostname and "://" not in hostname and "/" not in hostname:
             normalized.append(hostname)
+    return normalized
+
+
+def _normalize_extensions(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for value in values:
+        extension = value.strip().casefold()
+        if not extension:
+            continue
+        if not extension.startswith("."):
+            extension = f".{extension}"
+        if extension[1:].isalnum():
+            normalized.append(extension)
     return normalized
 
 

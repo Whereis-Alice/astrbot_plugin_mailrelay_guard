@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
@@ -194,7 +195,13 @@ class PreparedHtmlMail:
     plain_body: str
 
 
-def prepare_html_mail(settings: MailRelaySettings, html_body: str) -> PreparedHtmlMail:
+def prepare_html_mail(
+    settings: MailRelaySettings,
+    html_body: str,
+    *,
+    allow_cid_images: bool = False,
+    allowed_cids: Collection[str] = (),
+) -> PreparedHtmlMail:
     """Validate, sanitize, and derive a text fallback from an HTML fragment."""
 
     if not settings.enable_html_mail:
@@ -211,7 +218,10 @@ def prepare_html_mail(settings: MailRelaySettings, html_body: str) -> PreparedHt
     css_properties = _css_properties(settings)
     attributes = _allowed_attributes(settings)
     tags = set(_ALLOWED_TAGS)
-    if settings.html_allow_remote_images and settings.html_remote_image_allowed_domains:
+    if (
+        settings.html_allow_remote_images
+        and settings.html_remote_image_allowed_domains
+    ) or allow_cid_images:
         tags.add("img")
         attributes["img"] = {"alt", "height", "src", "style", "width"}
 
@@ -219,10 +229,15 @@ def prepare_html_mail(settings: MailRelaySettings, html_body: str) -> PreparedHt
         tags=tags,
         clean_content_tags=set(_DROP_WITH_CONTENT_TAGS),
         attributes=attributes,
-        attribute_filter=_attribute_filter(settings, css_properties),
+        attribute_filter=_attribute_filter(
+            settings,
+            css_properties,
+            allow_cid_images=allow_cid_images,
+            allowed_cids=frozenset(str(value).casefold() for value in allowed_cids),
+        ),
         strip_comments=True,
         link_rel="noopener noreferrer nofollow",
-        url_schemes={"https"},
+        url_schemes={"https", "cid"} if allow_cid_images else {"https"},
         url_relative="deny",
         filter_style_properties=css_properties,
     )
@@ -235,6 +250,8 @@ def prepare_html_mail(settings: MailRelaySettings, html_body: str) -> PreparedHt
         )
 
     plain_body = _html_to_plain_text(sanitized_html)
+    if not plain_body and allow_cid_images and "cid:" in sanitized_html.casefold():
+        plain_body = "此邮件包含内嵌图片，请使用支持 HTML 的邮件客户端查看。"
     if not plain_body:
         raise MailRelayValidationError(
             "HTML 邮件在清洗后没有可用文字，无法生成纯文本备用内容。"
@@ -289,7 +306,13 @@ def _allowed_attributes(settings: MailRelaySettings) -> dict[str, set[str]]:
     return attributes
 
 
-def _attribute_filter(settings: MailRelaySettings, css_properties: frozenset[str]):
+def _attribute_filter(
+    settings: MailRelaySettings,
+    css_properties: frozenset[str],
+    *,
+    allow_cid_images: bool = False,
+    allowed_cids: frozenset[str] = frozenset(),
+):
     def filter_attribute(tag: str, attribute: str, value: str) -> str | None:
         try:
             if attribute == "style":
@@ -297,6 +320,12 @@ def _attribute_filter(settings: MailRelaySettings, css_properties: frozenset[str
             if tag == "a" and attribute == "href":
                 return _sanitize_https_url(value)
             if tag == "img" and attribute == "src":
+                if (
+                    allow_cid_images
+                    and _is_safe_cid_url(value)
+                    and value.strip()[4:].casefold() in allowed_cids
+                ):
+                    return value.strip()
                 return _sanitize_https_url(
                     value,
                     allowed_hosts=settings.html_remote_image_allowed_domains,
@@ -307,6 +336,16 @@ def _attribute_filter(settings: MailRelaySettings, css_properties: frozenset[str
             return None
 
     return filter_attribute
+
+
+def _is_safe_cid_url(value: str) -> bool:
+    candidate = str(value or "").strip()
+    payload = candidate[4:] if candidate.casefold().startswith("cid:") else ""
+    return bool(
+        payload
+        and len(candidate) <= 180
+        and all(char.isalnum() or char in "@._-" for char in payload)
+    )
 
 
 def _css_properties(settings: MailRelaySettings) -> frozenset[str]:

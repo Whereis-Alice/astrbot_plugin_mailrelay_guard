@@ -15,6 +15,7 @@ from email.utils import formatdate, make_msgid
 from typing import Any
 
 from .config import MailRelaySettings
+from .media import MailAttachment
 
 LOGGER = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ class SMTPMailRelayClient:
         body: str,
         *,
         html_body: str | None = None,
+        attachments: list[MailAttachment] | tuple[MailAttachment, ...] = (),
     ) -> DeliveryResult:
         return await asyncio.to_thread(
             self._send_sync,
@@ -55,6 +57,7 @@ class SMTPMailRelayClient:
             subject.strip(),
             body.strip(),
             html_body,
+            tuple(attachments),
         )
 
     async def test_connection(self, settings: MailRelaySettings) -> None:
@@ -67,6 +70,7 @@ class SMTPMailRelayClient:
         subject: str,
         body: str,
         html_body: str | None = None,
+        attachments: tuple[MailAttachment, ...] = (),
     ) -> DeliveryResult:
         message = self._build_message(
             settings,
@@ -74,6 +78,7 @@ class SMTPMailRelayClient:
             subject,
             body,
             html_body=html_body,
+            attachments=attachments,
         )
         try:
             with self._open_and_authenticate(settings) as smtp:
@@ -148,6 +153,7 @@ class SMTPMailRelayClient:
         body: str,
         *,
         html_body: str | None = None,
+        attachments: tuple[MailAttachment, ...] = (),
     ) -> EmailMessage:
         message = EmailMessage(policy=SMTP)
         message["From"] = Address(
@@ -163,6 +169,28 @@ class SMTPMailRelayClient:
         message.set_content(body, subtype="plain", charset="utf-8")
         if html_body is not None:
             message.add_alternative(html_body, subtype="html", charset="utf-8")
+        html_part = message.get_body(preferencelist=("html",))
+        for attachment in attachments:
+            maintype, _, subtype = attachment.content_type.partition("/")
+            if not maintype or not subtype:
+                maintype, subtype = "application", "octet-stream"
+            if attachment.content_id and html_part is not None:
+                html_part.add_related(
+                    attachment.data,
+                    maintype=maintype,
+                    subtype=subtype,
+                    filename=attachment.filename,
+                    cid=f"<{attachment.content_id}>",
+                    disposition="inline",
+                )
+            else:
+                message.add_attachment(
+                    attachment.data,
+                    maintype=maintype,
+                    subtype=subtype,
+                    disposition="attachment",
+                    filename=attachment.filename,
+                )
         return message
 
     @staticmethod

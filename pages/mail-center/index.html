@@ -176,6 +176,22 @@
               </div>
             </section>
 
+            <section class="settings-section">
+              <header class="surface-heading"><div><p class="section-kicker">ATTACHMENTS</p><h2>附件与内嵌图片</h2><p>当前 QQ 消息和回复链使用 AstrBot 标准媒体组件；工作区文件只能来自当前会话工作区或 AstrBot 临时目录。</p></div></header>
+              <div class="setting-grid form-grid">
+                <label class="switch-field"><input id="setting-enable-attachments" name="enable_attachments" type="checkbox" /><span><strong>允许邮件附件</strong><small>关闭后所有图片和文件附件请求都会被拒绝。</small></span></label>
+                <label class="switch-field"><input id="setting-message-images" name="allow_message_images" type="checkbox" /><span><strong>读取 QQ 图片</strong><small>读取当前消息及引用回复中的图片。</small></span></label>
+                <label class="switch-field"><input id="setting-message-files" name="allow_message_files" type="checkbox" /><span><strong>读取 QQ 文件</strong><small>由 NapCat/AstrBot 取得文件后再执行附件限制。</small></span></label>
+                <label class="switch-field"><input id="setting-workspace-files" name="allow_workspace_attachments" type="checkbox" /><span><strong>允许工作区文件</strong><small>允许爱丽丝附加自己在当前会话工作区生成的文件。</small></span></label>
+                <label class="switch-field"><input id="setting-inline-images" name="enable_inline_images" type="checkbox" /><span><strong>允许 HTML 内嵌图片</strong><small>把 {{image_1}} 等占位符转换为 CID 图片。</small></span></label>
+                <label class="form-field"><span>单封最大附件数</span><input id="setting-attachment-count" name="max_attachments_per_message" type="number" min="1" max="20" /></label>
+                <label class="form-field"><span>单个附件上限（MB）</span><input id="setting-attachment-size" name="max_attachment_size_mb" type="number" min="1" max="50" /></label>
+                <label class="form-field"><span>附件合计上限（MB）</span><input id="setting-attachment-total" name="max_total_attachment_size_mb" type="number" min="1" max="100" /></label>
+                <label class="form-field"><span>附件读取超时（秒）</span><input id="setting-attachment-timeout" name="attachment_fetch_timeout_seconds" type="number" min="5" max="120" /></label>
+                <label class="form-field full"><span>禁止的附件扩展名</span><textarea id="setting-blocked-extensions" name="blocked_attachment_extensions" rows="3" placeholder="每行一个，例如 .exe"></textarea><small>默认拦截常见可执行文件、脚本和快捷方式。</small></label>
+              </div>
+            </section>
+
             <section class="settings-section split-settings">
               <div>
                 <header class="surface-heading"><div><p class="section-kicker">LOCAL ARCHIVE</p><h2>本地邮件归档</h2><p>归档仅用于该插件 Dashboard。它不是邮箱服务商的收件箱，也不会从 IMAP 或 POP3 拉取邮件。</p></div></header>

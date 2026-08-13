@@ -22,7 +22,7 @@ from typing import Any, Literal
 HistoryStatus = Literal["sending", "submitted", "partial", "failed", "unknown"]
 RecipientStatus = Literal["pending", "accepted", "refused", "failed", "unknown"]
 
-_SCHEMA_VERSION = "1"
+_SCHEMA_VERSION = "2"
 _EXCLUDED_ACTIONS = frozenset({"binding_challenge"})
 
 
@@ -43,6 +43,10 @@ class HistoryMessage:
     subject: str = ""
     plain_body: str = ""
     html_body: str | None = None
+    attachment_count: int = 0
+    inline_image_count: int = 0
+    attachment_total_bytes: int = 0
+    attachment_names: tuple[str, ...] = ()
 
 
 class MailHistoryStore:
@@ -317,7 +321,9 @@ class MailHistoryStore:
                 UPDATE messages
                 SET completed_at = ?, status = ?, message_id = ?,
                     accepted_count = ?, refused_count = ?, error_code = ?,
-                    content_saved = ?, subject = ?, plain_body = ?, html_body = ?
+                    content_saved = ?, subject = ?, plain_body = ?, html_body = ?,
+                    attachment_count = ?, inline_image_count = ?,
+                    attachment_total_bytes = ?, attachment_names = ?
                 WHERE id = ?
                 """,
                 (
@@ -334,6 +340,12 @@ class MailHistoryStore:
                     else None,
                     _bounded_text(result.html_body or "", 200_000)
                     if should_store_content and result.html_body
+                    else None,
+                    max(0, int(result.attachment_count)),
+                    max(0, int(result.inline_image_count)),
+                    max(0, int(result.attachment_total_bytes)),
+                    _serialize_attachment_names(result.attachment_names)
+                    if should_store_content
                     else None,
                     history_id,
                 ),
@@ -413,7 +425,8 @@ class MailHistoryStore:
                 """
                 SELECT id, created_at, completed_at, action, mode, content_format,
                        status, recipient_count, accepted_count, refused_count,
-                       error_code, content_saved, subject
+                       error_code, content_saved, subject, attachment_count,
+                       inline_image_count, attachment_total_bytes
                 FROM messages
                 """
                 + where
@@ -447,7 +460,8 @@ class MailHistoryStore:
                 SELECT id, created_at, completed_at, action, mode, content_format,
                        status, message_id, actor_token, recipient_count,
                        accepted_count, refused_count, error_code, content_saved,
-                       subject, plain_body, html_body
+                       subject, plain_body, html_body, attachment_count,
+                       inline_image_count, attachment_total_bytes, attachment_names
                 FROM messages WHERE id = ?
                 """,
                 (history_id,),
@@ -475,6 +489,14 @@ class MailHistoryStore:
                 "subject": row["subject"],
                 "plain_body": row["plain_body"],
                 "html_body": row["html_body"],
+                "attachment_count": int(row["attachment_count"] or 0),
+                "inline_image_count": int(row["inline_image_count"] or 0),
+                "attachment_total_bytes": int(
+                    row["attachment_total_bytes"] or 0
+                ),
+                "attachment_names": _deserialize_attachment_names(
+                    row["attachment_names"]
+                ),
                 "recipients": recipients,
             }
         except sqlite3.Error as exc:
@@ -593,6 +615,10 @@ class MailHistoryStore:
                 subject TEXT,
                 plain_body TEXT,
                 html_body TEXT
+                , attachment_count INTEGER NOT NULL DEFAULT 0
+                , inline_image_count INTEGER NOT NULL DEFAULT 0
+                , attachment_total_bytes INTEGER NOT NULL DEFAULT 0
+                , attachment_names TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_messages_created_at
                 ON messages(created_at DESC);
@@ -624,6 +650,29 @@ class MailHistoryStore:
         )
         connection.execute(
             "INSERT OR IGNORE INTO history_meta(key, value) VALUES ('schema_version', ?)",
+            (_SCHEMA_VERSION,),
+        )
+        _ensure_column(
+            connection,
+            "messages",
+            "attachment_count",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        _ensure_column(
+            connection,
+            "messages",
+            "inline_image_count",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        _ensure_column(
+            connection,
+            "messages",
+            "attachment_total_bytes",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        _ensure_column(connection, "messages", "attachment_names", "TEXT")
+        connection.execute(
+            "UPDATE history_meta SET value = ? WHERE key = 'schema_version'",
             (_SCHEMA_VERSION,),
         )
 
@@ -767,6 +816,9 @@ def _summary_item(row: sqlite3.Row, recipients: list[dict[str, Any]]) -> dict[st
         "error_code": row["error_code"],
         "content_saved": content_saved,
         "subject": row["subject"] if content_saved else None,
+        "attachment_count": int(row["attachment_count"] or 0),
+        "inline_image_count": int(row["inline_image_count"] or 0),
+        "attachment_total_bytes": int(row["attachment_total_bytes"] or 0),
         "recipients": recipients,
     }
 
@@ -816,6 +868,28 @@ def _mask_email(address: str) -> str:
 
 def _bounded_text(value: str, maximum: int) -> str:
     return str(value or "").replace("\x00", "").strip()[:maximum]
+
+
+def _serialize_attachment_names(values: tuple[str, ...]) -> str | None:
+    names = [_bounded_text(value, 180) for value in values if _bounded_text(value, 180)]
+    return "\n".join(names[:20]) or None
+
+
+def _deserialize_attachment_names(value: Any) -> list[str]:
+    return [line for line in str(value or "").splitlines() if line][:20]
+
+
+def _ensure_column(
+    connection: sqlite3.Connection,
+    table: str,
+    column: str,
+    declaration: str,
+) -> None:
+    existing = {
+        str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table})")
+    }
+    if column not in existing:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
 
 def _now_iso() -> str:

@@ -35,6 +35,13 @@ from .mailrelay_guard.identity import (
     event_is_private_chat,
     get_actor_identity,
 )
+from .mailrelay_guard.media import (
+    MailAttachment,
+    collect_mail_attachments,
+    contains_cid_placeholders,
+    embed_cid_placeholders,
+    summarize_media,
+)
 from .mailrelay_guard.policy import (
     MailRelayValidationError,
     parse_recipients,
@@ -54,7 +61,7 @@ from .mailrelay_guard.web_api import (
 )
 
 PLUGIN_ID = "astrbot_plugin_mailrelay_guard"
-PLUGIN_VERSION = "v1.3.4"
+PLUGIN_VERSION = "v1.4.0"
 ONE_HOUR_SECONDS = 60 * 60
 RecipientMode = Literal["owner", "self", "other", "binding"]
 MailContentFormat = Literal["plain", "html"]
@@ -70,12 +77,21 @@ _WEBUI_BOOLEAN_SETTINGS = frozenset(
         "sanitize_html_before_send",
         "html_allow_links",
         "html_allow_remote_images",
+        "enable_attachments",
+        "allow_message_images",
+        "allow_message_files",
+        "allow_workspace_attachments",
+        "enable_inline_images",
         "mail_history_enabled",
         "mail_history_store_content",
     }
 )
 _WEBUI_INTEGER_SETTINGS = {
     "max_html_body_chars",
+    "max_attachments_per_message",
+    "max_attachment_size_mb",
+    "max_total_attachment_size_mb",
+    "attachment_fetch_timeout_seconds",
     "mail_history_retention_days",
     "mail_history_max_records",
     "max_messages_per_hour",
@@ -83,7 +99,53 @@ _WEBUI_INTEGER_SETTINGS = {
     "max_delivery_attempts_per_actor_per_hour",
     "actor_min_send_interval_seconds",
 }
-_WEBUI_LIST_SETTINGS = frozenset({"html_remote_image_allowed_domains"})
+_WEBUI_LIST_SETTINGS = frozenset(
+    {"html_remote_image_allowed_domains", "blocked_attachment_extensions"}
+)
+
+
+def _attachment_tool_properties() -> dict[str, Any]:
+    """Shared optional arguments exposed on every mail tool."""
+
+    return {
+        "include_message_media": {
+            "type": "boolean",
+            "description": (
+                "是否附加当前 QQ 消息及引用回复中的图片/文件。默认 true；"
+                "当前消息没有媒体时不会产生附件。"
+            ),
+            "default": True,
+        },
+        "attachment_paths": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "可选的工作区文件路径列表。只允许当前会话工作区或 AstrBot 临时目录，"
+                "当前事件已登记的临时文件；每个路径都必须是普通文件。"
+            ),
+            "default": [],
+        },
+    }
+
+
+def _tool_attachment_options(kwargs: dict[str, Any]) -> tuple[bool, list[str]]:
+    include_message_media = kwargs.get("include_message_media", True)
+    if isinstance(include_message_media, str):
+        include_message_media = include_message_media.strip().casefold() not in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }
+    elif not isinstance(include_message_media, bool):
+        include_message_media = True
+    raw_paths = kwargs.get("attachment_paths", [])
+    if isinstance(raw_paths, str):
+        raw_paths = [raw_paths]
+    if not isinstance(raw_paths, (list, tuple)):
+        raw_paths = []
+    paths = [str(path).strip() for path in raw_paths if str(path).strip()]
+    return bool(include_message_media), paths
 
 
 def _tool_event(context: ContextWrapper[AstrAgentContext]) -> AstrMessageEvent | None:
@@ -110,6 +172,7 @@ class MailRelayNotifyOwnerTool(FunctionTool[AstrAgentContext]):
             "properties": {
                 "subject": {"type": "string", "description": "邮件主题。"},
                 "body": {"type": "string", "description": "纯文本邮件正文。"},
+                **_attachment_tool_properties(),
             },
             "required": ["subject", "body"],
             "additionalProperties": False,
@@ -122,10 +185,12 @@ class MailRelayNotifyOwnerTool(FunctionTool[AstrAgentContext]):
         if self.plugin is None:
             return "MailRelay Guard 当前不可用。"
         return await self.plugin.deliver_from_tool(
+            tool_context=context,
             event=_tool_event(context),
             mode="owner",
             subject=str(kwargs.get("subject", "")),
             body=str(kwargs.get("body", "")),
+            **dict(zip(("include_message_media", "attachment_paths"), _tool_attachment_options(kwargs))),
         )
 
 
@@ -145,6 +210,7 @@ class MailRelaySendToSelfTool(FunctionTool[AstrAgentContext]):
             "properties": {
                 "subject": {"type": "string", "description": "邮件主题。"},
                 "body": {"type": "string", "description": "纯文本邮件正文。"},
+                **_attachment_tool_properties(),
             },
             "required": ["subject", "body"],
             "additionalProperties": False,
@@ -157,10 +223,12 @@ class MailRelaySendToSelfTool(FunctionTool[AstrAgentContext]):
         if self.plugin is None:
             return "MailRelay Guard 当前不可用。"
         return await self.plugin.deliver_from_tool(
+            tool_context=context,
             event=_tool_event(context),
             mode="self",
             subject=str(kwargs.get("subject", "")),
             body=str(kwargs.get("body", "")),
+            **dict(zip(("include_message_media", "attachment_paths"), _tool_attachment_options(kwargs))),
         )
 
 
@@ -185,6 +253,7 @@ class MailRelaySendToRecipientTool(FunctionTool[AstrAgentContext]):
                 },
                 "subject": {"type": "string", "description": "邮件主题。"},
                 "body": {"type": "string", "description": "纯文本邮件正文。"},
+                **_attachment_tool_properties(),
             },
             "required": ["recipients", "subject", "body"],
             "additionalProperties": False,
@@ -197,11 +266,13 @@ class MailRelaySendToRecipientTool(FunctionTool[AstrAgentContext]):
         if self.plugin is None:
             return "MailRelay Guard 当前不可用。"
         return await self.plugin.deliver_from_tool(
+            tool_context=context,
             event=_tool_event(context),
             mode="other",
             recipients_input=str(kwargs.get("recipients", "")),
             subject=str(kwargs.get("subject", "")),
             body=str(kwargs.get("body", "")),
+            **dict(zip(("include_message_media", "attachment_paths"), _tool_attachment_options(kwargs))),
         )
 
 
@@ -225,6 +296,7 @@ class MailRelayNotifyOwnerHtmlTool(FunctionTool[AstrAgentContext]):
                     "type": "string",
                     "description": "完整 HTML 邮件正文。使用内联 CSS，不要使用脚本、表单或外链资源。",
                 },
+                **_attachment_tool_properties(),
             },
             "required": ["subject", "html_body"],
             "additionalProperties": False,
@@ -237,12 +309,14 @@ class MailRelayNotifyOwnerHtmlTool(FunctionTool[AstrAgentContext]):
         if self.plugin is None:
             return "MailRelay Guard 当前不可用。"
         return await self.plugin.deliver_from_tool(
+            tool_context=context,
             event=_tool_event(context),
             mode="owner",
             subject=str(kwargs.get("subject", "")),
             body="",
             html_body=str(kwargs.get("html_body", "")),
             content_format="html",
+            **dict(zip(("include_message_media", "attachment_paths"), _tool_attachment_options(kwargs))),
         )
 
 
@@ -266,6 +340,7 @@ class MailRelaySendHtmlToSelfTool(FunctionTool[AstrAgentContext]):
                     "type": "string",
                     "description": "完整 HTML 邮件正文。使用内联 CSS，不要使用脚本、表单或外链资源。",
                 },
+                **_attachment_tool_properties(),
             },
             "required": ["subject", "html_body"],
             "additionalProperties": False,
@@ -278,12 +353,14 @@ class MailRelaySendHtmlToSelfTool(FunctionTool[AstrAgentContext]):
         if self.plugin is None:
             return "MailRelay Guard 当前不可用。"
         return await self.plugin.deliver_from_tool(
+            tool_context=context,
             event=_tool_event(context),
             mode="self",
             subject=str(kwargs.get("subject", "")),
             body="",
             html_body=str(kwargs.get("html_body", "")),
             content_format="html",
+            **dict(zip(("include_message_media", "attachment_paths"), _tool_attachment_options(kwargs))),
         )
 
 
@@ -311,6 +388,7 @@ class MailRelaySendHtmlToRecipientTool(FunctionTool[AstrAgentContext]):
                     "type": "string",
                     "description": "完整 HTML 邮件正文。使用内联 CSS，不要使用脚本、表单或外链资源。",
                 },
+                **_attachment_tool_properties(),
             },
             "required": ["recipients", "subject", "html_body"],
             "additionalProperties": False,
@@ -323,6 +401,7 @@ class MailRelaySendHtmlToRecipientTool(FunctionTool[AstrAgentContext]):
         if self.plugin is None:
             return "MailRelay Guard 当前不可用。"
         return await self.plugin.deliver_from_tool(
+            tool_context=context,
             event=_tool_event(context),
             mode="other",
             recipients_input=str(kwargs.get("recipients", "")),
@@ -330,6 +409,7 @@ class MailRelaySendHtmlToRecipientTool(FunctionTool[AstrAgentContext]):
             body="",
             html_body=str(kwargs.get("html_body", "")),
             content_format="html",
+            **dict(zip(("include_message_media", "attachment_paths"), _tool_attachment_options(kwargs))),
         )
 
 
@@ -491,6 +571,8 @@ class MailRelayGuardPlugin(Star):
                     "html_tools_registered": self._html_tools_registered,
                     "html_mail_enabled": settings.enable_html_mail,
                     "html_strict_cleaning": settings.sanitize_html_before_send,
+                    "attachments_enabled": settings.enable_attachments,
+                    "inline_images_enabled": settings.enable_inline_images,
                     "history_enabled": settings.mail_history_enabled,
                     "history_store_content": settings.mail_history_store_content,
                     "history_available": history is not None,
@@ -792,6 +874,22 @@ class MailRelayGuardPlugin(Star):
                     settings.html_remote_image_allowed_domains
                 ),
                 "max_html_body_chars": settings.max_html_body_chars,
+                "enable_attachments": settings.enable_attachments,
+                "allow_message_images": settings.allow_message_images,
+                "allow_message_files": settings.allow_message_files,
+                "allow_workspace_attachments": settings.allow_workspace_attachments,
+                "enable_inline_images": settings.enable_inline_images,
+                "max_attachments_per_message": settings.max_attachments_per_message,
+                "max_attachment_size_mb": settings.max_attachment_size_mb,
+                "max_total_attachment_size_mb": (
+                    settings.max_total_attachment_size_mb
+                ),
+                "attachment_fetch_timeout_seconds": (
+                    settings.attachment_fetch_timeout_seconds
+                ),
+                "blocked_attachment_extensions": sorted(
+                    settings.blocked_attachment_extensions
+                ),
                 "mail_history_enabled": settings.mail_history_enabled,
                 "mail_history_store_content": settings.mail_history_store_content,
                 "mail_history_retention_days": settings.mail_history_retention_days,
@@ -1021,6 +1119,7 @@ class MailRelayGuardPlugin(Star):
     async def deliver_from_tool(
         self,
         *,
+        tool_context: ContextWrapper[AstrAgentContext] | None = None,
         event: AstrMessageEvent | None,
         mode: RecipientMode,
         subject: str,
@@ -1029,6 +1128,8 @@ class MailRelayGuardPlugin(Star):
         action: str | None = None,
         html_body: str | None = None,
         content_format: MailContentFormat = "plain",
+        include_message_media: bool = False,
+        attachment_paths: list[str] | tuple[str, ...] = (),
     ) -> str:
         """The shared final boundary for LLM tools and interactive commands."""
 
@@ -1065,6 +1166,7 @@ class MailRelayGuardPlugin(Star):
         if problems:
             return self._format_configuration_problem("邮件未发送", problems)
 
+        attachments: list[MailAttachment] = []
         try:
             recipients = await self._recipients_for_mode(
                 event=event,
@@ -1078,10 +1180,32 @@ class MailRelayGuardPlugin(Star):
                     settings,
                     recipients,
                     subject,
-                    body,
+                    body or "邮件附件，请查收。",
                     enforce_recipient_policy=(
                         mode == "other" and settings.restrict_admin_other_recipients
                     ),
+                )
+            if include_message_media or attachment_paths:
+                attachments = await collect_mail_attachments(
+                    context=tool_context,
+                    event=event,
+                    settings=settings,
+                    include_message_media=include_message_media,
+                    workspace_file_paths=attachment_paths,
+                )
+                if not body.strip() and attachments and content_format == "plain":
+                    body = "邮件附件，请查收。"
+            if content_format == "html" and html_body and contains_cid_placeholders(
+                html_body
+            ):
+                if not settings.enable_inline_images:
+                    raise MailRelayValidationError(
+                        "管理员已关闭 HTML 图片内嵌功能，不能使用 {{image_N}} 占位符。"
+                    )
+                html_body, attachments = embed_cid_placeholders(
+                    html_body,
+                    attachments,
+                    cid_domain=settings.sender_address.rsplit("@", 1)[-1],
                 )
         except MailRelayValidationError as exc:
             await self._audit(
@@ -1103,6 +1227,7 @@ class MailRelayGuardPlugin(Star):
             body=body.strip(),
             action=actual_action,
             html_body=html_body if content_format == "html" else None,
+            attachments=attachments,
         )
 
     async def request_mailbox_binding(
@@ -1306,13 +1431,25 @@ class MailRelayGuardPlugin(Star):
         action: str,
         expose_recipient: bool = False,
         html_body: str | None = None,
+        attachments: list[MailAttachment] | tuple[MailAttachment, ...] = (),
     ) -> str:
         problems = configuration_problems(settings)
         if problems:
             return self._format_configuration_problem("邮件未发送", problems)
         if html_body is not None:
             try:
-                prepared_html = prepare_html_mail(settings, html_body)
+                prepared_html = prepare_html_mail(
+                    settings,
+                    html_body,
+                    allow_cid_images=any(
+                        attachment.content_id for attachment in attachments
+                    ),
+                    allowed_cids={
+                        attachment.content_id
+                        for attachment in attachments
+                        if attachment.content_id
+                    },
+                )
             except MailRelayValidationError as exc:
                 await self._audit(
                     settings,
@@ -1362,6 +1499,7 @@ class MailRelayGuardPlugin(Star):
                 body=body,
                 action=action,
                 html_body=html_body,
+                attachments=attachments,
             )
         if succeeded and expose_recipient:
             return response
@@ -1379,6 +1517,7 @@ class MailRelayGuardPlugin(Star):
         body: str,
         action: str,
         html_body: str | None = None,
+        attachments: list[MailAttachment] | tuple[MailAttachment, ...] = (),
     ) -> tuple[bool, str]:
         if not self._global_success_limiter.can_send(
             max_messages=settings.max_messages_per_hour,
@@ -1464,22 +1603,42 @@ class MailRelayGuardPlugin(Star):
             recipients=recipients,
             content_format="html" if html_body is not None else "plain",
         )
+        media_summary = summarize_media(attachments)
         try:
             if html_body is None:
-                result = await self._smtp_client.send(
-                    settings,
-                    recipients,
-                    subject,
-                    body,
-                )
+                if attachments:
+                    result = await self._smtp_client.send(
+                        settings,
+                        recipients,
+                        subject,
+                        body,
+                        attachments=attachments,
+                    )
+                else:
+                    result = await self._smtp_client.send(
+                        settings,
+                        recipients,
+                        subject,
+                        body,
+                    )
             else:
-                result = await self._smtp_client.send(
-                    settings,
-                    recipients,
-                    subject,
-                    body,
-                    html_body=html_body,
-                )
+                if attachments:
+                    result = await self._smtp_client.send(
+                        settings,
+                        recipients,
+                        subject,
+                        body,
+                        html_body=html_body,
+                        attachments=attachments,
+                    )
+                else:
+                    result = await self._smtp_client.send(
+                        settings,
+                        recipients,
+                        subject,
+                        body,
+                        html_body=html_body,
+                    )
         except MailRelayTransportError as exc:
             await self._finalize_history_delivery(
                 history_id,
@@ -1487,6 +1646,9 @@ class MailRelayGuardPlugin(Star):
                     message_id=None,
                     status="failed",
                     error_code="transport_error",
+                    attachment_count=media_summary.attachment_count,
+                    inline_image_count=media_summary.inline_image_count,
+                    attachment_total_bytes=media_summary.total_bytes,
                 ),
                 settings,
             )
@@ -1529,6 +1691,10 @@ class MailRelayGuardPlugin(Star):
                 subject=subject,
                 plain_body=body,
                 html_body=html_body,
+                attachment_count=media_summary.attachment_count,
+                inline_image_count=media_summary.inline_image_count,
+                attachment_total_bytes=media_summary.total_bytes,
+                attachment_names=media_summary.filenames,
             ),
             settings,
         )
@@ -1541,17 +1707,25 @@ class MailRelayGuardPlugin(Star):
             detail=(
                 f"mode={mode};format={'html' if html_body is not None else 'plain'};"
                 f"accepted={accepted_count};"
-                f"refused={len(result.refused_recipients)}"
+                f"refused={len(result.refused_recipients)};"
+                f"attachments={media_summary.attachment_count};"
+                f"inline_images={media_summary.inline_image_count};"
+                f"attachment_bytes={media_summary.total_bytes}"
             ),
         )
+        media_text = _format_media_result(media_summary)
         if result.is_complete:
-            return True, f"邮件已提交 SMTP 服务器，共 {accepted_count} 位收件人。"
+            return (
+                True,
+                f"邮件已提交 SMTP 服务器，共 {accepted_count} 位收件人{media_text}。",
+            )
         if accepted_count:
             return (
                 True,
                 (
                     "邮件已部分提交 SMTP 服务器："
-                    f"成功 {accepted_count} 位，拒绝 {len(result.refused_recipients)} 位。"
+                    f"成功 {accepted_count} 位，拒绝 {len(result.refused_recipients)} 位"
+                    f"{media_text}。"
                 ),
             )
         return False, "邮件未发送：SMTP 服务器拒绝了所有收件人。"
@@ -1597,6 +1771,9 @@ class MailRelayGuardPlugin(Star):
             f"- HTML 模板邮件：{'开启' if settings.enable_html_mail else '关闭'}",
             f"- HTML 邮件工具：{'已注册' if self._html_tools_registered else '未注册'}",
             f"- HTML 严格清洗：{'开启' if settings.sanitize_html_before_send else '关闭'}",
+            f"- 邮件附件：{'开启' if settings.enable_attachments else '关闭'}",
+            f"- HTML 内嵌图片：{'开启' if settings.enable_inline_images else '关闭'}",
+            f"- 附件限制：{settings.max_attachments_per_message} 个 / 单个 {settings.max_attachment_size_mb} MB / 合计 {settings.max_total_attachment_size_mb} MB",
             f"- WebUI 邮件历史：{'开启' if settings.mail_history_enabled else '关闭'}",
             f"- WebUI 保存邮件内容：{'开启' if settings.mail_history_store_content else '关闭'}",
             f"- 自助发给自己：{'开启' if settings.enable_self_delivery else '关闭'}",
@@ -1661,3 +1838,12 @@ def _mailbox_source_label(source: str) -> str:
         "qq_mailbox_derivation": "QQ 号邮箱推导（未验证）",
     }
     return labels.get(source, "未知来源")
+
+
+def _format_media_result(summary: Any) -> str:
+    count = int(getattr(summary, "attachment_count", 0) or 0)
+    inline_count = int(getattr(summary, "inline_image_count", 0) or 0)
+    if not count:
+        return ""
+    inline_text = f"，其中 {inline_count} 张为 HTML 内嵌图片" if inline_count else ""
+    return f"；携带 {count} 个附件{inline_text}"

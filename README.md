@@ -23,6 +23,32 @@ MailRelay Guard 是为 Alice 一类 AstrBot 助手准备的 SMTP 邮件插件。
 - 只有已配置的 AstrBot 管理员可以让 Alice 向其他人发信。
 - 斜杠命令和 LLM 工具执行相同的服务端权限规则。面板中的命令权限只是额外保护，不是唯一安全边界。
 
+## 图片与文件附件
+
+六个 LLM 邮件工具都支持附件。`include_message_media` 默认是 `true`，因此你可以直接在 QQ 中把图片或文件与请求放在同一条消息里，例如：
+
+```text
+[发送一张图片] 爱丽丝，把这张图发到我邮箱，正文写“旅行照片”。
+```
+
+也可以回复一条包含图片或文件的旧消息，再让爱丽丝发送。AstrBot/NapCat 会把引用消息解析到 `Reply.chain`，插件从标准 `Image` 和 `File` 组件取媒体，不需要额外填写 NapCat 地址或 Token。
+
+爱丽丝在当前会话工作区生成了报告、表格或图片时，可以通过工具的 `attachment_paths` 附加它们。路径只允许位于当前会话工作区或 AstrBot 临时目录；沙箱运行时只允许 `/workspace`。普通用户即使要求附加文件，收件人仍然只能是自己的已解析或已验证邮箱；只有管理员代发工具能指定别人。
+
+HTML 邮件可以让爱丽丝在模板中使用图片占位符：
+
+```html
+<div style="padding:24px;background-color:#10131f;color:#ffffff">
+  <h1 style="color:#00e5ff">Alice 的图片邮件</h1>
+  <p>下面是你在 QQ 中发来的第一张图片：</p>
+  {{image_1}}
+</div>
+```
+
+`{{image_1}}` 表示本次附件中的第一张可嵌入图片，依次可用 `{{image_2}}`、`{{image_3}}`。占位符也可写在 `<img src="{{image_1}}">` 中。插件会生成随机 Content-ID 并构造标准 `multipart/related` 邮件；未被引用的图片仍作为普通附件。CID 图片不依赖外部网站，和 `html_allow_remote_images` 的远程图片白名单互不混用。
+
+默认限制为最多 `6` 个附件、单个 `10 MB`、合计 `20 MB`、读取超时 `20` 秒，并阻止常见可执行文件和脚本扩展名。任一附件不符合限制时会拒绝整封邮件，不会静默少发。网易及收件方仍可能有更低的服务商限制。
+
 ## 从 v1.0 升级
 
 v1.1 使用三种直接投递工具取代了旧版的草稿确认流程。旧的草稿命令、草稿令牌和对应配置项已移除，不再需要确认令牌。
@@ -37,7 +63,9 @@ v1.1 使用三种直接投递工具取代了旧版的草稿确认流程。旧的
 
 `v1.3.0` 增加 Dashboard 邮件中心和本地投递历史。历史记录默认只保存脱敏元数据；邮件主题和正文仍默认不落盘。升级后请确认 AstrBot 已升级到 `4.27.2` 或更高版本。
 
-`v1.3.4` 继续优化邮件中心的选择与阅读：列表标题独占首行，收件人和时间在下一行，SMTP 状态和 HTML 格式不再挤占标题；完整状态仍可在详情中查看。选中邮件后可点击“专注阅读”收起列表，或点击“全屏阅读”进入原生全屏；若 AstrBot 的嵌入页面禁止原生全屏，页面会自动保持可退出的沉浸阅读模式。预览默认阅读尺寸为 120%，可在 90% 至 145% 间本地调节。此更新不改变 SMTP 投递规则、历史保留策略、内容归档开关或 HTML 预览的安全限制。
+`v1.4.0` 新增受策略保护的邮件附件：爱丽丝可以把当前 QQ 消息或引用回复里的图片/文件附在邮件中，也可以附加当前会话工作区中由她生成的文件。HTML 模板支持 `{{image_1}}`、`{{image_2}}` 占位符，图片会作为邮件标准 CID 资源嵌入；没有被模板引用的图片仍会作为普通附件。附件会在服务端执行数量、大小、超时、来源和危险扩展名检查，普通用户的收件人权限不受影响。邮件中心详情会显示附件元数据，但不会保存附件二进制内容。
+
+`v1.3.4` 继续优化邮件中心的选择与阅读：列表标题独占首行，收件人和时间在下一行，SMTP 状态和 HTML 格式不再挤占标题；完整状态仍可在详情中查看。选中邮件后可点击“专注阅读”收起列表，或点击“全屏阅读”进入原生全屏；若 AstrBot 的嵌入页面禁止原生全屏，页面会自动保持可退出的沉浸阅读模式。预览默认阅读尺寸为 120%，可在 90% 至 145% 间本地调节。
 
 ## 网易 163 快速配置
 
@@ -201,7 +229,7 @@ HTML 邮件会以 `multipart/alternative` 格式同时发送 HTML 与纯文本�
 
 ## Dashboard 邮件中心
 
-安装并重载 `v1.3.4` 后，在 AstrBot Dashboard 的插件页面中打开 **MailRelay Guard - 邮件中心**。该页面由 AstrBot 的已登录 Dashboard 承载，不会额外启动公开的 Web 服务。
+安装并重载 `v1.4.0` 后，在 AstrBot Dashboard 的插件页面中打开 **MailRelay Guard - 邮件中心**。该页面由 AstrBot 的已登录 Dashboard 承载，不会额外启动公开的 Web 服务。
 
 邮件中心提供以下工作区：
 
@@ -255,7 +283,7 @@ HTML 邮件会以 `multipart/alternative` 格式同时发送 HTML 与纯文本�
 /mailrelay_send colleague@example.com | 审阅请求 | 请查看聊天中提到的内容。
 ```
 
-默认只启用纯文本邮件。开启 HTML 功能后，插件只增加受清洗的 HTML 模板邮件，不提供附件、抄送或密送。这让 Alice 可以自由设计邮件视觉，同时不会把公共聊天能力变成不受控制的网页或群发渠道。
+默认只启用纯文本邮件。附件功能默认开启但受大小、数量、来源和类型限制；开启 HTML 功能后，插件增加受清洗的 HTML 模板邮件，可使用 CID 内嵌当前消息图片，不提供抄送或密送。这让 Alice 可以自由设计邮件视觉，同时不会把公共聊天能力变成不受控制的网页或群发渠道。
 
 ## 重要配置项
 
@@ -270,7 +298,8 @@ HTML 邮件会以 `multipart/alternative` 格式同时发送 HTML 与纯文本�
 | 自助邮箱 | `self_email_overrides`、`self_binding_enabled`、`verification_code_ttl_seconds`、`verification_resend_seconds`、`verification_max_attempts` | 映射格式为 `platform_id:sender_id=email@example.com`。绑定验证码有次数限制。 |
 | QQ 号推导 | `allow_qq_mailbox_derivation`、`qq_mail_domain` | 默认关闭，因为 QQ 号推导不是已验证的资料邮箱。 |
 | 管理员收件人策略 | `restrict_admin_other_recipients`、`admin_other_recipient_allowlist`、`admin_other_allowed_domains` | 对管理员第三方投递增加可选白名单限制。 |
-| HTML 模板 | `enable_html_mail`、`sanitize_html_before_send`、`html_allow_links`、`html_allow_remote_images`、`html_remote_image_allowed_domains`、`max_html_body_chars` | HTML 默认关闭且严格清洗。远程图片必须同时开启开关并配置精确域名白名单。 |
+| HTML 模板 | `enable_html_mail`、`sanitize_html_before_send`、`html_allow_links`、`html_allow_remote_images`、`html_remote_image_allowed_domains`、`enable_inline_images`、`max_html_body_chars` | HTML 默认关闭且严格清洗。远程图片必须同时开启开关并配置精确域名白名单；QQ/工作区图片可用 CID 内嵌，不需要远程图片开关。 |
+| 附件 | `enable_attachments`、`allow_message_images`、`allow_message_files`、`allow_workspace_attachments`、`max_attachments_per_message`、`max_attachment_size_mb`、`max_total_attachment_size_mb`、`attachment_fetch_timeout_seconds`、`blocked_attachment_extensions` | 默认允许受限附件。当前消息/引用回复媒体和工作区文件均在服务端读取、去重、限大小和拦截危险类型。 |
 | 邮件中心历史 | `mail_history_enabled`、`mail_history_store_content`、`mail_history_retention_days`、`mail_history_max_records` | 默认记录脱敏投递元数据，不保存主题和正文。开启内容归档后，已接受邮件的主题、纯文本和清洗后 HTML 会保存在本机，供 Dashboard 查看。 |
 | 限制 | `max_messages_per_hour`、`max_successful_messages_per_actor_per_hour`、`max_delivery_attempts_per_actor_per_hour`、`actor_min_send_interval_seconds` | SMTP 失败也会计入单用户尝试上限。 |
 | 隐私 | `audit_log_enabled`、`audit_max_file_kb` | 审计不会记录邮件正文、授权码或完整邮箱地址。 |
@@ -283,7 +312,8 @@ HTML 邮件会以 `multipart/alternative` 格式同时发送 HTML 与纯文本�
 - HTML 只允许受支持的内联 CSS；脚本、表单、事件属性、危险协议、相对 URL、外链 CSS 和不在白名单内的远程图片会被移除。关闭严格清洗也不会关闭这条底线。
 - QQ/NapCat 资料查询只针对当前调用者。好友列表只在内存中用于匹配，不会整体缓存、记录或暴露给 Alice。
 - 已验证的自助邮箱保存在 AstrBot 的插件数据目录中。待验证的验证码仅以哈希形式保存在内存，重载插件后失效。
-- 审计日志只记录调用者指纹、投递模式、邮件格式、结果、收件人数及收件域名，不记录主题、纯文本正文、HTML 模板、SMTP 密钥或完整邮箱。
+- 审计日志只记录调用者指纹、投递模式、邮件格式、结果、收件人数、收件域名和附件数量/大小，不记录主题、纯文本正文、HTML 模板、附件二进制、文件名、SMTP 密钥或完整邮箱。
+- 附件历史只保存数量、CID 图片数量和字节数；只有明确开启 `mail_history_store_content` 且 SMTP 接受至少一位收件人时，邮件中心详情才会额外保存清洗后的附件文件名。附件原始内容不会写入 SQLite。
 - 邮件中心历史与审计日志相互独立。历史默认只保存脱敏投递元数据；只有明确开启 `mail_history_store_content` 后才会保存已接受邮件的主题、正文和清洗后 HTML。Dashboard 预览会再次禁用链接和远程图片。
 - 默认通过 TLS 投递。除非明确开启 `allow_plain_smtp`，否则明文 SMTP 会被阻止。
 - 全局成功投递上限、单用户成功上限、包含失败的单用户尝试上限和单用户冷却时间，可降低误发和滥用风险。
@@ -309,6 +339,14 @@ HTML 邮件会以 `multipart/alternative` 格式同时发送 HTML 与纯文本�
 ### HTML 样式没有显示或内容被删除
 
 先确认 `enable_html_mail` 已开启并已重载插件。默认严格清洗会移除脚本、`<style>` 标签、外链资源和不支持的 CSS，请让 Alice 使用内联 CSS。不同邮箱客户端也会自行过滤 CSS，因此应优先使用颜色、边框、圆角、阴影、字号、间距和表格布局。远程图片必须同时开启 `html_allow_remote_images` 并配置精确域名白名单。
+
+### 图片没有显示在 HTML 邮件中
+
+请确认模板使用的是 `{{image_1}}` 这类占位符，并且 `enable_inline_images=true`。编号按本次邮件中的图片顺序计算，不按文件顺序计算；如果当前消息没有图片，插件会拒绝带有占位符的邮件。CID 图片不需要开启远程图片，也不需要给图片配置域名白名单。部分极老旧的邮件客户端可能不支持 CID，此时仍可从普通附件区域打开未引用的图片。
+
+### QQ 文件或图片读取失败
+
+确认消息确实包含 AstrBot 标准 `Image`/`File` 组件，或回复了包含媒体的消息。NapCat 只负责把媒体交给 AstrBot，插件不会自行调用一个固定的 NapCat HTTP 地址。检查 `allow_message_images`、`allow_message_files`、附件大小上限和读取超时；超过任一限制时会拒绝整封邮件。
 
 ### NapCat 需要额外配置
 

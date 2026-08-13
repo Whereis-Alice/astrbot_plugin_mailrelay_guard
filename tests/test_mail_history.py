@@ -42,6 +42,10 @@ class MailHistoryTests(unittest.TestCase):
                         subject="安全主题",
                         plain_body="纯文本备用内容",
                         html_body='<p style="color:#ff00aa">HTML 内容</p>',
+                        attachment_count=2,
+                        inline_image_count=1,
+                        attachment_total_bytes=4096,
+                        attachment_names=("Alice.png", "报告.pdf"),
                     ),
                     retention_days=30,
                     max_records=20,
@@ -52,6 +56,9 @@ class MailHistoryTests(unittest.TestCase):
                 item = outbox["items"][0]
                 self.assertEqual(item["status"], "partial")
                 self.assertEqual(item["subject"], "安全主题")
+                self.assertEqual(item["attachment_count"], 2)
+                self.assertEqual(item["inline_image_count"], 1)
+                self.assertNotIn("Alice.png", str(item))
                 self.assertEqual(item["recipients"][0]["address"], "a***e@example.com")
                 self.assertNotIn("alice@example.com", str(item))
 
@@ -70,6 +77,8 @@ class MailHistoryTests(unittest.TestCase):
                 self.assertTrue(detail["content_saved"])
                 self.assertEqual(detail["plain_body"], "纯文本备用内容")
                 self.assertIn("HTML 内容", detail["html_body"])
+                self.assertEqual(detail["attachment_total_bytes"], 4096)
+                self.assertEqual(detail["attachment_names"], ["Alice.png", "报告.pdf"])
                 self.assertNotIn("alice@example.com", str(detail))
 
                 hidden_id = await store.begin_delivery(

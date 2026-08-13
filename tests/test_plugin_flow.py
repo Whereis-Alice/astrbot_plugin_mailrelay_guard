@@ -40,11 +40,13 @@ class FakeEvent:
         admin: bool = False,
         private: bool = True,
         platform_id: str = "aiocqhttp",
+        components=None,
     ) -> None:
         self.sender_id = sender_id
         self.admin = admin
         self.private = private
         self.platform_id = platform_id
+        self.message_obj = type("Message", (), {"message": list(components or [])})()
 
     def is_admin(self) -> bool:
         return self.admin
@@ -283,6 +285,47 @@ class PluginFlowTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_self_media_delivery_keeps_recipient_isolation(self) -> None:
+        async def scenario() -> None:
+            from astrbot.api.message_components import Image
+
+            with tempfile.TemporaryDirectory() as temporary_dir:
+                image_path = Path(temporary_dir) / "alice.png"
+                image_path.write_bytes(b"\x89PNG\r\n\x1a\nmailrelay")
+                plugin = MailRelayGuardPlugin(FakeContext(), plugin_config())
+                sent_calls = []
+
+                async def fake_send(
+                    settings,
+                    recipients,
+                    subject,
+                    body,
+                    *,
+                    attachments=(),
+                ):
+                    sent_calls.append((recipients, attachments))
+                    return DeliveryResult("<test@example.com>", tuple(recipients), ())
+
+                plugin._smtp_client.send = fake_send
+                result = await MailRelaySendToSelfTool(plugin=plugin).call(
+                    WrappedToolContext(
+                        FakeEvent(
+                            sender_id="user",
+                            components=[Image.fromFileSystem(str(image_path))],
+                        )
+                    ),
+                    subject="图片",
+                    body="请查收",
+                    recipients="attacker@example.com",
+                )
+
+                self.assertIn("SMTP", result)
+                self.assertEqual(sent_calls[0][0], ["user@example.com"])
+                self.assertEqual(len(sent_calls[0][1]), 1)
+                self.assertEqual(sent_calls[0][1][0].content_type, "image/png")
+
+        asyncio.run(scenario())
+
     def test_html_self_tool_sanitizes_content_and_keeps_recipient_isolation(self) -> None:
         async def scenario() -> None:
             plugin = MailRelayGuardPlugin(
@@ -348,6 +391,32 @@ class PluginFlowTests(unittest.TestCase):
             )
 
             self.assertIn("尚未开启 HTML", result)
+            self.assertEqual(sent_calls, [])
+
+        asyncio.run(scenario())
+
+    def test_html_cid_placeholder_is_rejected_when_message_has_no_image(self) -> None:
+        async def scenario() -> None:
+            plugin = MailRelayGuardPlugin(
+                FakeContext(),
+                plugin_config(enable_html_mail=True),
+            )
+            sent_calls = []
+
+            async def fake_send(settings, recipients, subject, body, *, html_body=None):
+                sent_calls.append((recipients, subject, body, html_body))
+                return DeliveryResult("<test@example.com>", tuple(recipients), ())
+
+            plugin._smtp_client.send = fake_send
+            result = await MailRelaySendHtmlToSelfTool(plugin=plugin).call(
+                WrappedToolContext(FakeEvent(sender_id="user")),
+                subject="缺图测试",
+                html_body="<p>正文</p><img src='{{image_1}}'>",
+                include_message_media=False,
+                attachment_paths=[],
+            )
+
+            self.assertIn("没有可嵌入图片", result)
             self.assertEqual(sent_calls, [])
 
         asyncio.run(scenario())

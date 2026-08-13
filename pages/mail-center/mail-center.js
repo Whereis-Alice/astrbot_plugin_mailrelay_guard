@@ -56,6 +56,16 @@ const mockSettings = {
     max_html_body_chars: 30000,
     mail_history_enabled: true,
     mail_history_store_content: true,
+    enable_attachments: true,
+    allow_message_images: true,
+    allow_message_files: true,
+    allow_workspace_attachments: true,
+    enable_inline_images: true,
+    max_attachments_per_message: 6,
+    max_attachment_size_mb: 10,
+    max_total_attachment_size_mb: 20,
+    attachment_fetch_timeout_seconds: 20,
+    blocked_attachment_extensions: [".exe", ".js"],
     mail_history_retention_days: 30,
     mail_history_max_records: 500,
     max_messages_per_hour: 30,
@@ -68,7 +78,7 @@ const mockSettings = {
 };
 
 const mockSummary = {
-  version: "v1.3.4",
+  version: "v1.4.0",
   readiness: "ready",
   configuration_problems: [],
   smtp: { host: "smtp.163.com", port: 465, security: "ssl", account_configured: true, sender_configured: true },
@@ -198,6 +208,10 @@ async function demoGet(endpoint, params = {}) {
       message_id: `<${item.id.slice(0, 12)}@mailrelay.local>`,
       actor_token: "22c04b3f969780cc8dfd22fa",
       plain_body: item.content_saved ? "Alice 已完成本次任务。此投递副本用于在邮件中心快速回看发送内容。" : null,
+      attachment_count: item.attachment_count || 0,
+      inline_image_count: item.inline_image_count || 0,
+      attachment_total_bytes: item.attachment_total_bytes || 0,
+      attachment_names: item.attachment_names || [],
       html_preview: item.content_format === "html" && item.content_saved
         ? '<div style="max-width:620px;margin:20px auto;border:1px solid #c6d2e9;border-radius:8px;background-color:#f8fbff;color:#1d2942;padding:26px;font-family:Arial,sans-serif"><h1 style="color:#00889a;font-size:24px;margin:0 0 14px">任务已完成</h1><p style="font-size:15px;line-height:1.7;margin:0">Alice 已整理好你请求的内容，并生成这封安全预览邮件。</p><div style="border-top:1px solid #d9e3f2;margin-top:20px;padding-top:14px;color:#62708d;font-size:12px">由 MailRelay Guard 清洗后的 HTML 副本</div></div>'
         : "",
@@ -407,6 +421,14 @@ function recipientText(item) {
   return recipients.map((recipient) => recipient.address || recipient.domain || "(unknown)").join(" · ");
 }
 
+function formatBytes(value) {
+  const bytes = Number(value || 0);
+  if (!bytes) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function renderRecent(items) {
   const container = clear(byId("recent-list"));
   if (!items.length) {
@@ -588,8 +610,18 @@ function renderMessageDetail(detail) {
     metadataCell("投递模式", modeNames[detail.mode] || detail.mode || "--"),
     metadataCell("SMTP 接受", `${detail.accepted_count || 0} / ${detail.recipient_count || 0}`),
     metadataCell("拒绝 / 错误", detail.refused_count ? `${detail.refused_count} 位被拒绝` : detail.error_code || "无"),
+    metadataCell("附件", detail.attachment_count ? `${detail.attachment_count} 个 · ${formatBytes(detail.attachment_total_bytes)}` : "无"),
+    metadataCell("HTML 内嵌", detail.inline_image_count ? `${detail.inline_image_count} 张 CID 图片` : "无"),
   );
   factsContent.append(metadata);
+  if ((detail.attachment_names || []).length) {
+    const attachments = create("section", "recipient-area");
+    attachments.append(create("h3", "", "附件清单"));
+    const names = create("div", "recipient-list");
+    detail.attachment_names.forEach((name) => names.append(create("span", "recipient-item", name)));
+    attachments.append(names);
+    factsContent.append(attachments);
+  }
 
   const recipientArea = create("section", "recipient-area");
   recipientArea.append(create("h3", "", "脱敏收件人"));
@@ -726,6 +758,11 @@ function populateSettings(payload) {
     "setting-html-images": "html_allow_remote_images",
     "setting-history-enabled": "mail_history_enabled",
     "setting-history-content": "mail_history_store_content",
+    "setting-enable-attachments": "enable_attachments",
+    "setting-message-images": "allow_message_images",
+    "setting-message-files": "allow_message_files",
+    "setting-workspace-files": "allow_workspace_attachments",
+    "setting-inline-images": "enable_inline_images",
   };
   Object.entries(checks).forEach(([id, key]) => { byId(id).checked = Boolean(settings[key]); });
   const values = {
@@ -737,6 +774,11 @@ function populateSettings(payload) {
     "setting-actor-success-hour": settings.max_successful_messages_per_actor_per_hour,
     "setting-actor-attempt-hour": settings.max_delivery_attempts_per_actor_per_hour,
     "setting-actor-cooldown": settings.actor_min_send_interval_seconds,
+    "setting-attachment-count": settings.max_attachments_per_message,
+    "setting-attachment-size": settings.max_attachment_size_mb,
+    "setting-attachment-total": settings.max_total_attachment_size_mb,
+    "setting-attachment-timeout": settings.attachment_fetch_timeout_seconds,
+    "setting-blocked-extensions": (settings.blocked_attachment_extensions || []).join("\n"),
   };
   Object.entries(values).forEach(([id, value]) => { byId(id).value = value ?? ""; });
   const smtp = state.summary?.smtp || {};
@@ -777,6 +819,16 @@ function readSettingsForm() {
     html_allow_remote_images: byId("setting-html-images").checked,
     html_remote_image_allowed_domains: splitLines(settingsValue("setting-html-domains")),
     max_html_body_chars: integerField("setting-html-max", "HTML 源码上限"),
+    enable_attachments: byId("setting-enable-attachments").checked,
+    allow_message_images: byId("setting-message-images").checked,
+    allow_message_files: byId("setting-message-files").checked,
+    allow_workspace_attachments: byId("setting-workspace-files").checked,
+    enable_inline_images: byId("setting-inline-images").checked,
+    max_attachments_per_message: integerField("setting-attachment-count", "单封最大附件数"),
+    max_attachment_size_mb: integerField("setting-attachment-size", "单个附件上限"),
+    max_total_attachment_size_mb: integerField("setting-attachment-total", "附件合计上限"),
+    attachment_fetch_timeout_seconds: integerField("setting-attachment-timeout", "附件读取超时"),
+    blocked_attachment_extensions: splitLines(settingsValue("setting-blocked-extensions")),
     mail_history_enabled: byId("setting-history-enabled").checked,
     mail_history_store_content: byId("setting-history-content").checked,
     mail_history_retention_days: integerField("setting-history-retention", "保留天数"),

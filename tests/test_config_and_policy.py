@@ -52,6 +52,15 @@ class ConfigAndPolicyTests(unittest.TestCase):
         self.assertFalse(settings.html_allow_remote_images)
         self.assertEqual(settings.html_remote_image_allowed_domains, frozenset())
         self.assertEqual(settings.max_html_body_chars, 30000)
+        self.assertTrue(settings.enable_attachments)
+        self.assertTrue(settings.allow_message_images)
+        self.assertTrue(settings.allow_message_files)
+        self.assertTrue(settings.allow_workspace_attachments)
+        self.assertTrue(settings.enable_inline_images)
+        self.assertEqual(settings.max_attachments_per_message, 6)
+        self.assertEqual(settings.max_attachment_size_mb, 10)
+        self.assertEqual(settings.max_total_attachment_size_mb, 20)
+        self.assertIn(".exe", settings.blocked_attachment_extensions)
         self.assertEqual(settings.smtp_password, DEFAULT_PLACEHOLDER_PASSWORD)
         problems = " ".join(configuration_problems(settings))
         self.assertIn("smtp_username", problems)
@@ -78,6 +87,11 @@ class ConfigAndPolicyTests(unittest.TestCase):
                 "sanitize_html_before_send": "清洗",
                 "html_allow_links": "链接",
                 "html_allow_remote_images": "图片",
+                "enable_attachments": "附件",
+                "allow_message_images": "图片附件",
+                "allow_message_files": "文件附件",
+                "allow_workspace_attachments": "工作区",
+                "enable_inline_images": "内嵌",
             }
         )
 
@@ -91,6 +105,11 @@ class ConfigAndPolicyTests(unittest.TestCase):
         self.assertTrue(settings.sanitize_html_before_send)
         self.assertFalse(settings.html_allow_links)
         self.assertFalse(settings.html_allow_remote_images)
+        self.assertFalse(settings.enable_attachments)
+        self.assertFalse(settings.allow_message_images)
+        self.assertFalse(settings.allow_message_files)
+        self.assertFalse(settings.allow_workspace_attachments)
+        self.assertFalse(settings.enable_inline_images)
 
     def test_null_boolean_values_use_conservative_settings(self) -> None:
         settings = load_settings(

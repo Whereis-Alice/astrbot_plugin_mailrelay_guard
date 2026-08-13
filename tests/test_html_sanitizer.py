@@ -18,6 +18,18 @@ def html_settings(**overrides):
 
 
 class HtmlSanitizerTests(unittest.TestCase):
+    def test_cid_images_require_an_exact_generated_content_id(self) -> None:
+        prepared = prepare_html_mail(
+            html_settings(),
+            '<p>图片</p><img src="cid:generated@example.com" alt="Alice">'
+            '<img src="cid:missing@example.com" alt="不存在">',
+            allow_cid_images=True,
+            allowed_cids={"generated@example.com"},
+        )
+
+        self.assertIn("cid:generated@example.com", prepared.html_body)
+        self.assertNotIn("cid:missing@example.com", prepared.html_body)
+
     def test_strict_cleaning_removes_active_content_and_keeps_safe_style(self) -> None:
         prepared = prepare_html_mail(
             html_settings(html_allow_links=True),

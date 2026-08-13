@@ -287,6 +287,75 @@
     "description": "HTML 模板源码最大字符数",
     "hint": "HTML、内联 CSS 和正文均计入；超出时会拒绝发送，不会截断。"
   },
+  "enable_attachments": {
+    "type": "bool",
+    "default": true,
+    "description": "允许邮件携带附件",
+    "hint": "开启后，爱丽丝可以附加当前 QQ 消息中的图片/文件，或使用受限工作区路径附加文件。关闭后所有附件请求都会被拒绝。"
+  },
+  "allow_message_images": {
+    "type": "bool",
+    "default": true,
+    "description": "允许附加当前消息图片",
+    "hint": "默认开启。爱丽丝调用邮件工具时，会读取同一条消息及引用回复中的 AstrBot 标准 Image 组件；读取失败会拒绝本次邮件。"
+  },
+  "allow_message_files": {
+    "type": "bool",
+    "default": true,
+    "description": "允许附加当前消息文件",
+    "hint": "默认开启。QQ 文件会先由 NapCat/AstrBot 适配器取得本地副本，再按大小、类型和数量限制加入邮件。"
+  },
+  "allow_workspace_attachments": {
+    "type": "bool",
+    "default": true,
+    "description": "允许附加工作区文件",
+    "hint": "默认开启，但只允许当前会话工作区或 AstrBot 临时目录中的普通文件，不能读取任意服务器路径。"
+  },
+  "enable_inline_images": {
+    "type": "bool",
+    "default": true,
+    "description": "允许 HTML 内嵌图片",
+    "hint": "默认开启。HTML 模板中的 {{image_1}}、{{image_2}} 会转换为邮件 CID 图片；未引用的图片仍作为普通附件。"
+  },
+  "max_attachments_per_message": {
+    "type": "int",
+    "default": 6,
+    "min": 1,
+    "max": 20,
+    "description": "单封邮件最大附件数",
+    "hint": "同一图片/文件重复出现只计一次；超过上限会拒绝整封邮件，不会截断发送。"
+  },
+  "max_attachment_size_mb": {
+    "type": "int",
+    "default": 10,
+    "min": 1,
+    "max": 50,
+    "description": "单个附件大小上限（MB）",
+    "hint": "读取 QQ 媒体或工作区文件时即检查大小，避免大文件占满内存或 SMTP 连接。"
+  },
+  "max_total_attachment_size_mb": {
+    "type": "int",
+    "default": 20,
+    "min": 1,
+    "max": 100,
+    "description": "单封邮件附件总大小上限（MB）",
+    "hint": "按去重后的附件字节数计算；超过上限会拒绝整封邮件。"
+  },
+  "attachment_fetch_timeout_seconds": {
+    "type": "int",
+    "default": 20,
+    "min": 5,
+    "max": 120,
+    "description": "附件读取超时（秒）",
+    "hint": "QQ 图片/文件下载和沙箱工作区文件下载都使用此超时，不会让 AstrBot 事件循环无限等待。"
+  },
+  "blocked_attachment_extensions": {
+    "type": "list",
+    "items": {"type": "string"},
+    "default": [".bat", ".cmd", ".com", ".cpl", ".exe", ".hta", ".js", ".jse", ".lnk", ".msi", ".ps1", ".reg", ".scr", ".vbe", ".vbs", ".wsf"],
+    "description": "禁止发送的附件扩展名",
+    "hint": "默认拦截常见可执行文件、脚本和快捷方式；可按部署需要增删扩展名，大小写和是否带点均可。"
+  },
   "mail_history_enabled": {
     "type": "bool",
     "default": true,
