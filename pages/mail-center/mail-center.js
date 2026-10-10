@@ -1,11 +1,12 @@
 import * as api from './api.js';
+import {historyShell,historyContent,historyError,bindHistory} from './offline-charts.js';
 import {esc,fillIcons,loading,empty,notice,button,safeFrame} from './ui.js';
 import {overview,mailbox,messageList,reader,monitor,settingsView} from './views.js';
 
 const main = document.getElementById('main');
 const titles = {overview:'运行概览',mailbox:'邮件中心',monitor:'掉线守护',settings:'投递设置'};
-const state = {route:'overview',folder:'sent',query:'',status:'',format:'',offset:0,items:[],selected:null,detail:null,tab:'plain',focused:false,dirty:false};
-let routeEpoch = 0, listEpoch = 0, detailEpoch = 0, toastTimer, settingsSnapshot = {}, monitorTimer;
+const state = {route:'overview',folder:'sent',query:'',status:'',format:'',offset:0,items:[],selected:null,detail:null,tab:'plain',focused:false,dirty:false,historyPeriod:'7d',historyAccount:''};
+let routeEpoch = 0, listEpoch = 0, detailEpoch = 0, toastTimer, settingsSnapshot = {}, monitorTimer, historyEpoch = 0;
 const $ = selector => document.querySelector(selector);
 function toast(message) { const el = $('#toast'); el.textContent = message; el.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; },5500); }
 function errorBlock(error) { return empty('暂时无法加载',error.message || '请求失败，请稍后重试。','alert')+`<div class="button-row" style="justify-content:center">${button('retry','重新加载')}</div>`; }
@@ -54,7 +55,7 @@ async function renderRoute() {
       if (epoch !== routeEpoch) return;
       settingsSnapshot = payload.settings;
       main.innerHTML = route === 'monitor' ? monitor(settingsSnapshot,off) : settingsView(settingsSnapshot);
-      if (route === 'monitor') scheduleMonitorRefresh(epoch);
+      if (route === 'monitor') { $('#offline-overview').innerHTML = historyShell(state.historyPeriod,state.historyAccount); await loadOfflineHistory(); scheduleMonitorRefresh(epoch); }
     }
     if (epoch === routeEpoch) main.setAttribute('aria-busy','false');
   } catch(error) { if (epoch === routeEpoch) { main.innerHTML = errorBlock(error); main.setAttribute('aria-busy','false'); } }
@@ -69,8 +70,34 @@ function scheduleMonitorRefresh(epoch) {
       const probe = document.createElement('div'); probe.innerHTML = monitor(settingsSnapshot,off);
       const current = main.querySelector('.grid-two'); current?.replaceWith(probe.querySelector('.grid-two'));
     } catch { /* Explicit refresh will surface errors without disrupting editing. */ }
-    if (epoch === routeEpoch) scheduleMonitorRefresh(epoch);
+    if (epoch === routeEpoch) {
+      const history = $('#offline-overview');
+      if (history && !history.contains(document.activeElement) && !history.matches(':hover') && !history.querySelector('details[open]')) void loadOfflineHistory(true);
+      scheduleMonitorRefresh(epoch);
+    }
   },15000);
+}
+async function loadOfflineHistory(background = false) {
+  const content = $('#history-content'); if (!content || state.route !== 'monitor') return;
+  const epoch=++historyEpoch, route=routeEpoch;
+  if (!background) content.setAttribute('aria-busy','true');
+  try {
+    const data=await api.get('webui/offline-history',{period:state.historyPeriod,account:state.historyAccount});
+    if (epoch!==historyEpoch || route!==routeEpoch || state.route!=='monitor') return;
+    if (!data.available) throw Error(data.message || '掉线历史暂时不可用。');
+    // Do not steal focus or erase a selected interval during a background refresh.
+    if (background && ($('#offline-overview').contains(document.activeElement) || $('#offline-overview').matches(':hover') || content.querySelector('details[open]'))) return;
+    const accounts=data.accounts || [], select=$('#history-account');
+    select.innerHTML='<option value="">全部账号</option>'+accounts.map(a => '<option value="'+esc(a.key)+'">'+esc((a.nickname || a.bot_id || a.key)+(a.nickname && a.bot_id ? ' · '+a.bot_id : ''))+'</option>').join('');
+    if (state.historyAccount && !accounts.some(a => a.key===state.historyAccount)) select.insertAdjacentHTML('beforeend','<option value="'+esc(state.historyAccount)+'">'+esc(state.historyAccount)+'（暂无记录）</option>');
+    select.value=state.historyAccount;
+    $('#history-alert').innerHTML=''; content.innerHTML=historyContent(data); bindHistory(content);
+  } catch(error) {
+    if (epoch===historyEpoch && route===routeEpoch) {
+      if (background) $('#history-alert').innerHTML=notice('历史刷新失败，当前显示上次成功的数据。'+error.message,'warning');
+      else { $('#history-alert').innerHTML=''; content.innerHTML=historyError(error.message); }
+    }
+  } finally { if (epoch===historyEpoch && route===routeEpoch) content.setAttribute('aria-busy','false'); }
 }
 async function loadMessages() {
   const epoch = ++listEpoch; const el = $('#mail-list'); if (!el) return;
@@ -120,6 +147,7 @@ main.addEventListener('input',event => {
   if (event.target.closest('.settings-form')) { state.dirty = true; if ($('#save-status')) $('#save-status').textContent = '有未保存的修改'; }
 });
 main.addEventListener('change',event => {
+  if (event.target.id === 'history-period' || event.target.id === 'history-account') { state[event.target.id === 'history-period' ? 'historyPeriod' : 'historyAccount'] = event.target.value; void loadOfflineHistory(); }
   if (event.target.closest('.settings-form')) { state.dirty = true; if ($('#save-status')) $('#save-status').textContent = '有未保存的修改'; }
   if (event.target.id === 'status-filter' || event.target.id === 'format-filter') { state[event.target.id === 'status-filter' ? 'status' : 'format'] = event.target.value; state.offset = 0; void loadMessages(); }
 });
@@ -129,6 +157,7 @@ main.addEventListener('submit',event => {
   else void save(event.target);
 });
 async function act(action) {
+  if (action === 'history-refresh') await loadOfflineHistory();
   if (action === 'retry') { await api.ready(); await renderRoute(); }
   if (action === 'smtp-test') toast((await api.post('webui/smtp-probe')).message);
   if (action === 'offline-test') {

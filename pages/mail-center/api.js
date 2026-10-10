@@ -19,10 +19,44 @@ let items = [
 function offline() { return {enabled:settings.enabled && settings.enable_offline_notifications,last_check_at:Date.now()/1000 - 36,last_error:"",effective_recipients:{count:settings.offline_notify_recipients.length || 1,source:settings.offline_notify_recipients.length ? "custom" : "owner"},monitored:settings.enable_offline_notifications ? [{key:"qq-main:10001",platform:"aiocqhttp",bot_id:"10001",nickname:"我的机器人",online:true,fail_count:0,offline_since:null,downtime:"",last_reason:""}] : []}; }
 function summary() { return {readiness:"ready",configuration_problems:[],smtp:{host:"smtp.163.com",port:465,security:"ssl"},features:{history_enabled:settings.mail_history_enabled,history_store_content:settings.mail_history_store_content,history_available:true,llm_tools_registered:true,html_tools_registered:true,html_mail_enabled:settings.enable_html_mail,attachments_enabled:settings.enable_attachments,inline_images_enabled:true},history:{total:items.length,submitted:4,partial:1,failed:1,today_total:3,today_accepted:2},offline:offline()}; }
 const settingsPayload = () => ({settings:copy(settings),restart_required_fields:["enable_html_mail"],secret_fields:["smtp_password","smtp_username","sender_address"]});
+function offlineHistory(params) {
+  const period=params.period || '7d', range={ '24h':86400,'7d':604800,'30d':2592000 }[period], now=Date.now()/1000, start=now-range;
+  const accounts=[{key:'qq-main:10001',platform:'aiocqhttp',bot_id:'10001',nickname:'我的机器人',last_seen:now-36},{key:'qq-backup:10002',platform:'aiocqhttp',bot_id:'10002',nickname:'小号机器人',last_seen:now-36}];
+  const selected=accounts.filter(a => !params.account || a.key===params.account), events=[], series=[];
+  for (const a of selected) {
+    const index=accounts.findIndex(item => item.key===a.key);
+    const spans=[{start:now-3*86400,end:now-2*86400,state:'gap',reason:'监控未运行'},{start:now-6*3600,end:now-5*3600,state:'gap',reason:'插件重载期间没有观测'},{start:now-12*3600,end:now-11.8*3600,state:'suspect',reason:'短暂探测失败，未达到掉线阈值'}];
+    [25*86400,18*86400,9*86400,6*86400,4*86400,1.5*86400,22*3600,7*3600,2*3600].forEach((offset,i) => {
+      const from=now-offset-index*900, length=[360,960,300,1800,540,1200,720,2400,420][i]+index*180;
+      const e={id:index*100+i+1,account:a.key,bot_id:a.bot_id,nickname:a.nickname,started_at:from,confirmed_at:from+180,ended_at:from+length,status:'recovered',reason:i%2 ? 'OneBot 客户端连接已断开' : '平台报告账号已离线',duration_seconds:Math.max(0,Math.min(now,from+length)-Math.max(start,from))};
+      if(e.ended_at>=start && e.started_at<=now) events.push(e);
+      spans.push({start:from,end:from+length,state:'offline',reason:e.reason});
+    });
+    spans.sort((a,b) => a.start-b.start); const segments=[]; let cursor=now-28*86400;
+    for(const span of spans) { if(span.start>cursor) segments.push({start:cursor,end:span.start,state:'online',reason:''}); if(span.state!=='gap') segments.push(span); cursor=Math.max(cursor,span.end); }
+    segments.push({start:cursor,end:now-36,state:'online',reason:''});
+    series.push({...a,segments:segments.filter(s => s.end>start && s.start<now).map(s => ({...s,start:Math.max(start,s.start),end:Math.min(now,s.end)}))});
+  }
+  const step=period==='24h' ? 3600 : 86400, buckets=Array.from({length:range/step},(_,i) => ({start:start+i*step,end:start+(i+1)*step,offline_seconds:null,online_seconds:0,observed_seconds:0,incident_count:0}));
+  for(const b of buckets) {
+    for(const a of series) for(const s of a.segments) {
+      const length=Math.max(0,Math.min(b.end,s.end)-Math.max(b.start,s.start));
+      if(!length || !['online','offline'].includes(s.state)) continue;
+      b.observed_seconds+=length;
+      if(s.state==='online') b.online_seconds+=length; else b.offline_seconds=(b.offline_seconds || 0)+length;
+    }
+    if(b.observed_seconds && b.offline_seconds==null) b.offline_seconds=0;
+    b.incident_count=events.filter(e => e.started_at<b.end && e.ended_at>b.start).length;
+  }
+  const observed=buckets.reduce((v,b) => v+b.observed_seconds,0), online=buckets.reduce((v,b) => v+b.online_seconds,0);
+  events.sort((a,b) => b.started_at-a.started_at);
+  return {available:true,period,account:params.account || '',start,end:now,last_observed_at:selected.length ? now-36 : null,retention_days:90,accounts,series,incidents:events,incident_total:events.length,buckets,summary:{incident_count:events.length,observed_seconds:observed,offline_seconds:observed-online,longest_seconds:Math.max(0,...events.map(e => e.duration_seconds)),uptime_ratio:observed ? online/observed : null,coverage_ratio:selected.length ? observed/(range*selected.length) : 0}};
+}
 function demoGet(endpoint, params) {
   if (endpoint === "webui/summary") return summary();
   if (endpoint === "webui/settings") return settingsPayload();
   if (endpoint === "webui/offline-status") return offline();
+  if (endpoint === "webui/offline-history") return offlineHistory(params);
   if (endpoint === "webui/messages") {
     let rows = items.filter(item => (!params.query || item.subject.includes(params.query)) && (!params.status || item.status === params.status) && (!params.format || item.content_format === params.format));
     if (params.folder === "errors") rows = rows.filter(item => ["failed","partial","unknown"].includes(item.status));

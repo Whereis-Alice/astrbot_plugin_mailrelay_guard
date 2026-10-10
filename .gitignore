@@ -5,3 +5,8 @@ __pycache__/
 .venv/
 venv/
 mailrelay_guard_audit*.jsonl
+data/
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm

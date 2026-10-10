@@ -62,7 +62,7 @@ from .mailrelay_guard.web_api import (
 )
 
 PLUGIN_ID = "astrbot_plugin_mailrelay_guard"
-PLUGIN_VERSION = "v1.5.0"
+PLUGIN_VERSION = "v1.6.0"
 ONE_HOUR_SECONDS = 60 * 60
 RecipientMode = Literal["owner", "self", "other", "binding"]
 MailContentFormat = Literal["plain", "html"]
@@ -514,6 +514,9 @@ class MailRelayGuardPlugin(Star):
 
         await self._ensure_mail_history(settings)
 
+        if self._data_dir is not None:
+            await self._offline_monitor.initialize_history(self._data_dir)
+
         if settings.enabled and settings.enable_llm_mail_tools:
             self.context.add_llm_tools(
                 MailRelayNotifyOwnerTool(plugin=self),
@@ -565,6 +568,12 @@ class MailRelayGuardPlugin(Star):
         if not callable(register):
             return
         routes = (
+            (
+                "/webui/offline-history",
+                self.webui_offline_history,
+                ["GET"],
+                "Offline connection history",
+            ),
             (
                 "/webui/offline-status",
                 self.webui_offline_status,
@@ -748,6 +757,16 @@ class MailRelayGuardPlugin(Star):
         if not result["ok"]:
             return error_response(result["message"], data=result, status_code=400)
         return json_response(result)
+
+    async def webui_offline_history(self):
+        """Return bounded historical statistics for the authenticated plugin page."""
+        period = query_value("period", "7d")
+        account = query_value("account", "")
+        if period not in {"24h", "7d", "30d"} or len(account) > 200:
+            return error_response("时间范围或账号筛选无效。", status_code=400)
+        return json_response(
+            await self._offline_monitor.history_overview(period=period, account=account)
+        )
 
     async def _offline_audit(
         self, settings, *, action, outcome, recipients=(), detail=""

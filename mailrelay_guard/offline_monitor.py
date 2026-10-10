@@ -19,6 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from html import escape
+from pathlib import Path
 from typing import Any
 
 try:  # pragma: no cover - astrbot 运行环境
@@ -37,6 +38,7 @@ from .config import (
     configuration_problems,
     is_placeholder_address,
 )
+from .offline_history import OfflineHistoryError, OfflineHistoryStore
 from .policy import (
     MailRelayValidationError,
     validate_dispatch_request,
@@ -159,6 +161,59 @@ class OfflinePlatformMonitor:
         self._wake_event = asyncio.Event()
         self._check_lock = asyncio.Lock()
         self._notification_lock = asyncio.Lock()
+        self._history: OfflineHistoryStore | None = None
+
+    async def initialize_history(self, data_dir: Path) -> None:
+        history = OfflineHistoryStore(data_dir)
+        try:
+            await history.initialize()
+        except OfflineHistoryError as exc:
+            logger.warning("掉线历史不可用：%s", exc)
+            return
+        self._history = history
+
+    async def history_overview(
+        self, *, period: str = "7d", account: str = ""
+    ) -> dict[str, Any]:
+        if self._history is None:
+            return {
+                "available": False,
+                "message": "掉线历史存储暂时不可用，请检查 AstrBot 日志和数据目录权限。",
+            }
+        try:
+            return await self._history.overview(period=period, account=account)
+        except OfflineHistoryError as exc:
+            logger.warning("读取掉线历史失败：%s", exc)
+            return {"available": False, "message": "暂时无法读取掉线历史，请稍后重试。"}
+
+    async def _record_history(
+        self, settings: MailRelaySettings, state: _PlatformState, observed_at: float
+    ) -> None:
+        if self._history is None:
+            return
+        status = (
+            "unknown"
+            if state.probe_state == "unknown"
+            else "offline"
+            if not state.online
+            else "suspect"
+            if state.fail_count
+            else "online"
+        )
+        try:
+            await self._history.record(
+                key=state.key,
+                observed_at=observed_at,
+                state=status,
+                reason=state.last_reason,
+                interval=settings.offline_check_interval_seconds,
+                offline_since=state.offline_since,
+                platform=state.platform_name,
+                bot_id=state.bot_id,
+                nickname=state.nickname,
+            )
+        except OfflineHistoryError as exc:
+            logger.warning("记录掉线历史失败（不影响通知）：%s", exc)
 
     def wake(self) -> None:
         """配置保存后立即重读，避免等待旧的检测间隔。"""
@@ -231,6 +286,7 @@ class OfflinePlatformMonitor:
                         value.last_reason = "平台客户端暂时不可用"
                         value.fail_count = 0
                         value.first_fail_at = None
+                        await self._record_history(settings, value, time.time())
                 continue
             ids = _connected_self_ids(client)
             # Keep disconnected accounts until the adapter is removed. Otherwise one
@@ -246,6 +302,11 @@ class OfflinePlatformMonitor:
                 previous.bot_id = targets[0]
                 previous.key = key + ":" + targets[0]
                 self._states[previous.key] = previous
+                if self._history is not None:
+                    try:
+                        await self._history.remap_account(key, previous.key)
+                    except OfflineHistoryError as exc:
+                        logger.warning("更新掉线历史账号失败：%s", exc)
             for bot_id in targets:
                 account_key = key + ":" + bot_id if bot_id else key
                 active_keys.add(account_key)
@@ -257,6 +318,11 @@ class OfflinePlatformMonitor:
         # 清理已不再被监控的平台状态。
         for stale in [key for key in self._states if key not in active_keys]:
             self._states.pop(stale, None)
+            if self._history is not None:
+                try:
+                    await self._history.break_account(stale)
+                except OfflineHistoryError as exc:
+                    logger.warning("结束掉线历史观测失败：%s", exc)
 
     async def _check_account(self, settings, state, platform, meta, bot_id):
         try:
@@ -274,6 +340,8 @@ class OfflinePlatformMonitor:
         """清空运行态（关闭监控或插件卸载时调用）。"""
 
         self._states.clear()
+        if self._history is not None:
+            self._history.restart_session()
         self._last_check_at = None
         self._last_error = ""
 
@@ -468,6 +536,7 @@ class OfflinePlatformMonitor:
     async def _apply_probe(
         self, settings: MailRelaySettings, state: _PlatformState, probe: _ProbeResult
     ) -> None:
+        observed_at = time.time()
         state.probe_state = probe.state
         if probe.platform_name:
             state.platform_name = probe.platform_name
@@ -481,6 +550,7 @@ class OfflinePlatformMonitor:
             state.first_fail_at = None
             if probe.reason:
                 state.last_reason = probe.reason
+            await self._record_history(settings, state, observed_at)
             return
 
         if probe.state == "online":
@@ -491,10 +561,11 @@ class OfflinePlatformMonitor:
             offline_since = state.offline_since
             state.online = True
             state.offline_since = None
+            await self._record_history(settings, state, observed_at)
             if was_offline:
                 downtime = ""
                 if offline_since is not None:
-                    downtime = _format_downtime(time.time() - offline_since)
+                    downtime = _format_downtime(observed_at - offline_since)
                 state.last_reason = ""
                 if settings.offline_notify_on_recovery:
                     state.pending_kind = ""
@@ -517,11 +588,12 @@ class OfflinePlatformMonitor:
         state.last_reason = probe.reason or "连接中断"
         state.fail_count += 1
         if state.first_fail_at is None:
-            state.first_fail_at = time.time()
+            state.first_fail_at = observed_at
         threshold = max(1, settings.offline_failure_threshold)
         if state.online and state.fail_count >= threshold:
             state.online = False
             state.offline_since = state.first_fail_at
+            await self._record_history(settings, state, observed_at)
             await self._notify_transition(
                 settings,
                 kind="offline",
@@ -529,8 +601,10 @@ class OfflinePlatformMonitor:
                 reason=state.last_reason,
                 downtime="",
             )
-        elif not state.online and state.pending_kind == "offline":
-            await self._retry_notification(settings, state)
+        else:
+            await self._record_history(settings, state, observed_at)
+            if not state.online and state.pending_kind == "offline":
+                await self._retry_notification(settings, state)
 
     async def _notify_transition(self, settings, *, kind, state, reason, downtime):
         result = await self._send_notification(
