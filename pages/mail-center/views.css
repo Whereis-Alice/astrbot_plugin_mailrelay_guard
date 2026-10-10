@@ -17,7 +17,7 @@
 .hero-text p{margin-top:12px;color:var(--hero-muted);font-size:14.5px;line-height:1.6;max-width:52ch}
 .hero-cta{margin-top:20px}
 .hero-stamp{flex:none}
-.hero-stamp img{
+.hero-stamp img,.hero-stamp .brand-logo{
   width:clamp(84px,10vw,118px);height:auto;padding:9px;border-radius:16px;
   background:var(--surface);box-shadow:var(--shadow-sm),0 0 0 1px var(--line) inset;transform:rotate(2deg);
 }

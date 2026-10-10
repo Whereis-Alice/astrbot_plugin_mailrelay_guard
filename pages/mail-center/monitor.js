@@ -54,7 +54,7 @@ function markup(settings, off) {
 }
 
 export async function monitorView(ctx) {
-  const s = ctx.store.state.monitor || (ctx.store.state.monitor = { historyPeriod:'7d', historyAccount:'' });
+  const s = ctx.store.state.monitor || (ctx.store.state.monitor = { historyPeriod:'24h', historyAccount:'' });
   const payload = await ctx.api.get('webui/settings');
   const off = await ctx.api.get('webui/offline-status');
   if (!ctx.isCurrent()) return;

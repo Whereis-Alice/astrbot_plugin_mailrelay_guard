@@ -29,7 +29,7 @@
   padding:4px 8px 18px;margin-bottom:14px;
   border-bottom:1px solid var(--rail-border);
 }
-.rail-brand img{width:40px;height:40px;border-radius:12px;flex:none}
+.rail-brand img,.rail-brand .brand-logo{width:40px;height:40px;border-radius:12px;flex:none}
 .rail-brand-text{display:flex;flex-direction:column;gap:2px;min-width:0}
 .rail-brand-text strong{font-family:var(--font-serif);font-size:17px;font-weight:600;letter-spacing:.01em}
 .rail-brand-text small{font-size:11.5px;color:var(--rail-muted)}

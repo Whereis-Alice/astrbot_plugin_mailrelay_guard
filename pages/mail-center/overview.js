@@ -1,5 +1,5 @@
 // 运行概览：hero + 统计卡 + 最近邮件 + 连接 + 能力。只读页面。
-import { esc, icon, badge, statusBadge, date, heading, empty, notice, button, row, card, logoUrl } from './ui.js';
+import { esc, icon, badge, statusBadge, date, heading, empty, notice, button, row, card, logoMark } from './ui.js';
 import { bindActions } from './dom.js';
 import { toast } from './shell.js';
 
@@ -19,7 +19,7 @@ function markup(summary, recentItems) {
   ];
   const statHtml = stats.map(([t, v, d, s]) => `<article class="stat-card"><div class="stat-top"><span>${esc(t)}</span><span class="stat-ico">${icon(s)}</span></div><div class="stat-value">${esc(v)}</div><div class="stat-foot">${esc(d)}</div></article>`).join('');
 
-  const hero = `<section class="hero"><div class="hero-text"><div class="eyebrow">A LITTLE PEACE OF MIND</div><h2>${ready ? '每一封重要的邮件，都值得安心送达。' : '先连接邮箱，再开始安心投递。'}</h2><p>${ready ? '邮件服务已就绪。你可以查看近期记录，也可以为 QQ 机器人开启掉线守护。' : '请在 AstrBot 插件配置中填写邮箱账号、SMTP 授权码和发件地址。'}</p><a class="button hero-cta" href="#${ready ? 'mailbox' : 'settings'}">${ready ? '打开邮件中心' : '查看投递设置'} ${icon('arrow')}</a></div><div class="hero-stamp"><img src="${esc(logoUrl)}" alt="我的邮件标志"></div></section>`;
+  const hero = `<section class="hero"><div class="hero-text"><div class="eyebrow">A LITTLE PEACE OF MIND</div><h2>${ready ? '每一封重要的邮件，都值得安心送达。' : '先连接邮箱，再开始安心投递。'}</h2><p>${ready ? '邮件服务已就绪。你可以查看近期记录，也可以为 QQ 机器人开启掉线守护。' : '请在 AstrBot 插件配置中填写邮箱账号、SMTP 授权码和发件地址。'}</p><a class="button hero-cta" href="#${ready ? 'mailbox' : 'settings'}">${ready ? '打开邮件中心' : '查看投递设置'} ${icon('arrow')}</a></div><div class="hero-stamp">${logoMark('hero')}</div></section>`;
 
   const svc = card('邮件服务', '邮箱凭据请在 AstrBot 插件配置中管理。',
     row('服务器', (summary.smtp?.host || '未填写') + ':' + (summary.smtp?.port || '—')) +

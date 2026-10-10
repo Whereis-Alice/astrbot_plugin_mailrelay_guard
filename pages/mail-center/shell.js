@@ -2,7 +2,7 @@
 // Builds the whole chrome in JS so the layout lives in one place. Views render
 // into #view; the shell stays mounted for the session.
 import { $, $$, on, delegate, group } from './dom.js';
-import { icon, logoUrl, esc } from './ui.js';
+import { icon, logoMark, esc } from './ui.js';
 import { THEMES, apply as applyTheme, resolveInitial, schemeOf, toggleScheme } from './theme.js';
 
 export const ROUTES = [
@@ -49,7 +49,7 @@ function shellMarkup() {
     <div class="rail-scrim" id="rail-scrim" hidden></div>
     <aside class="rail" id="rail" aria-label="主导航">
       <a class="rail-brand" href="#overview">
-        <img src="${esc(logoUrl)}" alt="" width="40" height="40">
+        ${logoMark('rail', true)}
         <span class="rail-brand-text"><strong>我的邮件</strong><small>每一封，都有着落</small></span>
       </a>
       <nav class="rail-nav">${nav}</nav>

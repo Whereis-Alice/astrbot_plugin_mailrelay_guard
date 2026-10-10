@@ -62,7 +62,7 @@ from .mailrelay_guard.web_api import (
 )
 
 PLUGIN_ID = "astrbot_plugin_mailrelay_guard"
-PLUGIN_VERSION = "v1.7.0"
+PLUGIN_VERSION = "v1.7.1"
 ONE_HOUR_SECONDS = 60 * 60
 RecipientMode = Literal["owner", "self", "other", "binding"]
 MailContentFormat = Literal["plain", "html"]

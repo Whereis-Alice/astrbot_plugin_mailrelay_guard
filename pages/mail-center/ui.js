@@ -7,6 +7,18 @@ export const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'
 // AstrBot page bridge and in the import-time test harness alike.
 export const logoUrl = new URL('./assets/logo.svg', import.meta.url).href;
 
+// 邮件图标：内联 SVG，随信纸主题变量着色，不发任何网络请求（规避面板里的资源 404）。
+export const logoMark = (prefix = 'mm', decorative = false) =>
+  `<svg class="brand-logo" viewBox="0 0 256 256" ${decorative ? 'aria-hidden="true"' : 'role="img" aria-label="我的邮件"'} xmlns="http://www.w3.org/2000/svg">`
+  + `<defs><linearGradient id="${prefix}-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" style="stop-color:var(--accent)"></stop><stop offset="1" style="stop-color:var(--accent-strong)"></stop></linearGradient></defs>`
+  + `<rect width="256" height="256" rx="60" fill="url(#${prefix}-bg)"></rect>`
+  + `<circle cx="196" cy="54" r="58" style="fill:var(--accent-contrast)" opacity=".10"></circle>`
+  + `<rect x="46" y="80" width="164" height="100" rx="22" style="fill:var(--accent-contrast)"></rect>`
+  + `<path d="M66 100 128 146 190 100" fill="none" style="stroke:var(--accent)" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"></path>`
+  + `<path d="M62 164 106 128" fill="none" style="stroke:var(--accent)" stroke-width="7" stroke-linecap="round" opacity=".25"></path>`
+  + `<path d="M194 164 150 128" fill="none" style="stroke:var(--accent)" stroke-width="7" stroke-linecap="round" opacity=".25"></path>`
+  + `</svg>`;
+
 export function icon(name) {
   return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.mail}</svg>`;
 }
