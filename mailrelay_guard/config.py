@@ -19,6 +19,47 @@ DEFAULT_PLACEHOLDER_PASSWORD = "YOUR_163_SMTP_AUTHORIZATION_CODE"
 # Retained so the v1.1.0 list placeholder stays inert after an upgrade.
 DEFAULT_PLACEHOLDER_QQ_ID = "YOUR_QQ_ID"
 
+DEFAULT_OFFLINE_SUBJECT_TEMPLATE = "【我的邮件】QQ 机器人掉线提醒：{{nickname}}"
+DEFAULT_RECOVERY_SUBJECT_TEMPLATE = "【我的邮件】QQ 机器人已恢复：{{nickname}}"
+DEFAULT_OFFLINE_BODY_TEMPLATE = """<div style="margin:0;padding:24px;background:#f3f5fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'PingFang SC','Microsoft YaHei',sans-serif;">
+  <div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 10px 30px rgba(15,23,42,0.10);">
+    <div style="background:linear-gradient(135deg,#ef4444,#b91c1c);padding:22px 28px;color:#ffffff;">
+      <div style="font-size:20px;font-weight:700;">🔴 机器人掉线提醒</div>
+      <div style="margin-top:6px;font-size:13px;opacity:0.92;">检测到 QQ 机器人与平台的连接已断开</div>
+    </div>
+    <div style="padding:24px 28px;color:#1f2937;font-size:14px;line-height:1.7;">
+      <p style="margin:0 0 18px;">你的机器人似乎掉线了，请尽快检查 NapCat / LLOneBot 的运行状态与网络连接。</p>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <tr><td style="padding:7px 0;color:#6b7280;width:84px;">机器人</td><td style="padding:7px 0;color:#111827;font-weight:600;">{{nickname}}</td></tr>
+        <tr><td style="padding:7px 0;color:#6b7280;">账号</td><td style="padding:7px 0;color:#111827;">{{bot_id}}</td></tr>
+        <tr><td style="padding:7px 0;color:#6b7280;">平台</td><td style="padding:7px 0;color:#111827;">{{platform}}</td></tr>
+        <tr><td style="padding:7px 0;color:#6b7280;">掉线时间</td><td style="padding:7px 0;color:#111827;">{{time}}</td></tr>
+        <tr><td style="padding:7px 0;color:#6b7280;">原因</td><td style="padding:7px 0;color:#111827;">{{reason}}</td></tr>
+      </table>
+    </div>
+    <div style="padding:16px 28px;background:#f9fafb;border-top:1px solid #eef2f7;color:#9ca3af;font-size:12px;">此邮件由「我的邮件」自动发送，请勿直接回复。</div>
+  </div>
+</div>"""
+DEFAULT_RECOVERY_BODY_TEMPLATE = """<div style="margin:0;padding:24px;background:#f3f5fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'PingFang SC','Microsoft YaHei',sans-serif;">
+  <div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 10px 30px rgba(15,23,42,0.10);">
+    <div style="background:linear-gradient(135deg,#22c55e,#15803d);padding:22px 28px;color:#ffffff;">
+      <div style="font-size:20px;font-weight:700;">🟢 机器人已恢复</div>
+      <div style="margin-top:6px;font-size:13px;opacity:0.92;">QQ 机器人与平台的连接已重新建立</div>
+    </div>
+    <div style="padding:24px 28px;color:#1f2937;font-size:14px;line-height:1.7;">
+      <p style="margin:0 0 18px;">你的机器人重新上线了，服务已恢复正常。</p>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <tr><td style="padding:7px 0;color:#6b7280;width:84px;">机器人</td><td style="padding:7px 0;color:#111827;font-weight:600;">{{nickname}}</td></tr>
+        <tr><td style="padding:7px 0;color:#6b7280;">账号</td><td style="padding:7px 0;color:#111827;">{{bot_id}}</td></tr>
+        <tr><td style="padding:7px 0;color:#6b7280;">平台</td><td style="padding:7px 0;color:#111827;">{{platform}}</td></tr>
+        <tr><td style="padding:7px 0;color:#6b7280;">恢复时间</td><td style="padding:7px 0;color:#111827;">{{time}}</td></tr>
+        <tr><td style="padding:7px 0;color:#6b7280;">本次掉线</td><td style="padding:7px 0;color:#111827;">{{downtime}}</td></tr>
+      </table>
+    </div>
+    <div style="padding:16px 28px;background:#f9fafb;border-top:1px solid #eef2f7;color:#9ca3af;font-size:12px;">此邮件由「我的邮件」自动发送，请勿直接回复。</div>
+  </div>
+</div>"""
+
 
 @dataclass(frozen=True)
 class MailRelaySettings:
@@ -88,6 +129,16 @@ class MailRelaySettings:
     max_tracked_actors: int
     audit_log_enabled: bool
     audit_max_file_kb: int
+    enable_offline_notifications: bool
+    offline_check_interval_seconds: int
+    offline_failure_threshold: int
+    offline_notify_on_recovery: bool
+    offline_notify_recipients: frozenset[str]
+    offline_monitored_platforms: frozenset[str]
+    offline_subject_template: str
+    offline_body_template: str
+    recovery_subject_template: str
+    recovery_body_template: str
 
     @property
     def max_attachment_bytes(self) -> int:
@@ -133,7 +184,7 @@ def load_settings(config: Mapping[str, Any] | Any | None) -> MailRelaySettings:
             DEFAULT_PLACEHOLDER_ADDRESS,
         ),
         sender_name=_as_text(
-            _get(config, "sender_name", "Alice MailRelay"), "Alice MailRelay"
+            _get(config, "sender_name", "我的邮件"), "我的邮件"
         ),
         smtp_timeout_seconds=_as_int(
             _get(config, "smtp_timeout_seconds", 20), 20, minimum=5, maximum=120
@@ -427,6 +478,53 @@ def load_settings(config: Mapping[str, Any] | Any | None) -> MailRelaySettings:
             512,
             minimum=64,
             maximum=10240,
+        ),
+        enable_offline_notifications=_as_bool(
+            _get(config, "enable_offline_notifications", False),
+            False,
+            invalid_default=False,
+        ),
+        offline_check_interval_seconds=_as_int(
+            _get(config, "offline_check_interval_seconds", 180),
+            180,
+            minimum=30,
+            maximum=3600,
+        ),
+        offline_failure_threshold=_as_int(
+            _get(config, "offline_failure_threshold", 3),
+            3,
+            minimum=1,
+            maximum=10,
+        ),
+        offline_notify_on_recovery=_as_bool(
+            _get(config, "offline_notify_on_recovery", True),
+            True,
+            invalid_default=True,
+        ),
+        offline_notify_recipients=frozenset(
+            _as_list(_get(config, "offline_notify_recipients", []))
+        ),
+        offline_monitored_platforms=frozenset(
+            value.casefold()
+            for value in _as_list(
+                _get(config, "offline_monitored_platforms", ["aiocqhttp"])
+            )
+        ),
+        offline_subject_template=_as_text(
+            _get(config, "offline_subject_template", DEFAULT_OFFLINE_SUBJECT_TEMPLATE),
+            DEFAULT_OFFLINE_SUBJECT_TEMPLATE,
+        ),
+        offline_body_template=_as_text(
+            _get(config, "offline_body_template", DEFAULT_OFFLINE_BODY_TEMPLATE),
+            DEFAULT_OFFLINE_BODY_TEMPLATE,
+        ),
+        recovery_subject_template=_as_text(
+            _get(config, "recovery_subject_template", DEFAULT_RECOVERY_SUBJECT_TEMPLATE),
+            DEFAULT_RECOVERY_SUBJECT_TEMPLATE,
+        ),
+        recovery_body_template=_as_text(
+            _get(config, "recovery_body_template", DEFAULT_RECOVERY_BODY_TEMPLATE),
+            DEFAULT_RECOVERY_BODY_TEMPLATE,
         ),
     )
 

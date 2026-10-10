@@ -1,13 +1,13 @@
 {
   "metadata": {
-    "display_name": "MailRelay Guard（邮件中继防护）",
-    "short_desc": "提供受服务端权限约束的 SMTP 与 HTML 模板邮件，附带本地邮件中心。",
-    "desc": "为 Alice 提供安全的 SMTP 邮件工具、HTML 清洗、本地投递历史和受 Dashboard 登录保护的邮件中心。"
+    "display_name": "我的邮件",
+    "short_desc": "邮件发送与阅读、HTML 模板、图片文件附件、QQ 掉线守护。",
+    "desc": "让 AstrBot 发送邮件，查看投递记录，并在 NapCat 或 LLOneBot 的 QQ 机器人掉线和恢复时通过邮件提醒。收件人权限由服务端校验。"
   },
   "pages": {
     "mail-center": {
-      "title": "Alice 邮件中心",
-      "desc": "查看本地投递记录、HTML 安全预览和非敏感运行配置。"
+      "title": "我的邮件",
+      "desc": "查看邮件记录、阅读本地副本、管理投递设置与 QQ 掉线守护。"
     }
   }
 }

@@ -1,4 +1,4 @@
-"""MailRelay Guard: direct, policy-scoped SMTP delivery for AstrBot."""
+"""我的邮件: direct, policy-scoped SMTP delivery for AstrBot."""
 
 from __future__ import annotations
 
@@ -42,6 +42,7 @@ from .mailrelay_guard.media import (
     embed_cid_placeholders,
     summarize_media,
 )
+from .mailrelay_guard.offline_monitor import OfflinePlatformMonitor
 from .mailrelay_guard.policy import (
     MailRelayValidationError,
     parse_recipients,
@@ -61,7 +62,7 @@ from .mailrelay_guard.web_api import (
 )
 
 PLUGIN_ID = "astrbot_plugin_mailrelay_guard"
-PLUGIN_VERSION = "v1.4.0"
+PLUGIN_VERSION = "v1.5.0"
 ONE_HOUR_SECONDS = 60 * 60
 RecipientMode = Literal["owner", "self", "other", "binding"]
 MailContentFormat = Literal["plain", "html"]
@@ -84,6 +85,8 @@ _WEBUI_BOOLEAN_SETTINGS = frozenset(
         "enable_inline_images",
         "mail_history_enabled",
         "mail_history_store_content",
+        "enable_offline_notifications",
+        "offline_notify_on_recovery",
     }
 )
 _WEBUI_INTEGER_SETTINGS = {
@@ -98,9 +101,24 @@ _WEBUI_INTEGER_SETTINGS = {
     "max_successful_messages_per_actor_per_hour",
     "max_delivery_attempts_per_actor_per_hour",
     "actor_min_send_interval_seconds",
+    "offline_check_interval_seconds",
+    "offline_failure_threshold",
 }
 _WEBUI_LIST_SETTINGS = frozenset(
-    {"html_remote_image_allowed_domains", "blocked_attachment_extensions"}
+    {
+        "html_remote_image_allowed_domains",
+        "blocked_attachment_extensions",
+        "offline_notify_recipients",
+        "offline_monitored_platforms",
+    }
+)
+_WEBUI_TEXT_SETTINGS = frozenset(
+    {
+        "offline_subject_template",
+        "offline_body_template",
+        "recovery_subject_template",
+        "recovery_body_template",
+    }
 )
 
 
@@ -183,14 +201,19 @@ class MailRelayNotifyOwnerTool(FunctionTool[AstrAgentContext]):
         self, context: ContextWrapper[AstrAgentContext], **kwargs: Any
     ) -> str:
         if self.plugin is None:
-            return "MailRelay Guard 当前不可用。"
+            return "我的邮件 当前不可用。"
         return await self.plugin.deliver_from_tool(
             tool_context=context,
             event=_tool_event(context),
             mode="owner",
             subject=str(kwargs.get("subject", "")),
             body=str(kwargs.get("body", "")),
-            **dict(zip(("include_message_media", "attachment_paths"), _tool_attachment_options(kwargs))),
+            **dict(
+                zip(
+                    ("include_message_media", "attachment_paths"),
+                    _tool_attachment_options(kwargs),
+                )
+            ),
         )
 
 
@@ -221,14 +244,19 @@ class MailRelaySendToSelfTool(FunctionTool[AstrAgentContext]):
         self, context: ContextWrapper[AstrAgentContext], **kwargs: Any
     ) -> str:
         if self.plugin is None:
-            return "MailRelay Guard 当前不可用。"
+            return "我的邮件 当前不可用。"
         return await self.plugin.deliver_from_tool(
             tool_context=context,
             event=_tool_event(context),
             mode="self",
             subject=str(kwargs.get("subject", "")),
             body=str(kwargs.get("body", "")),
-            **dict(zip(("include_message_media", "attachment_paths"), _tool_attachment_options(kwargs))),
+            **dict(
+                zip(
+                    ("include_message_media", "attachment_paths"),
+                    _tool_attachment_options(kwargs),
+                )
+            ),
         )
 
 
@@ -264,7 +292,7 @@ class MailRelaySendToRecipientTool(FunctionTool[AstrAgentContext]):
         self, context: ContextWrapper[AstrAgentContext], **kwargs: Any
     ) -> str:
         if self.plugin is None:
-            return "MailRelay Guard 当前不可用。"
+            return "我的邮件 当前不可用。"
         return await self.plugin.deliver_from_tool(
             tool_context=context,
             event=_tool_event(context),
@@ -272,7 +300,12 @@ class MailRelaySendToRecipientTool(FunctionTool[AstrAgentContext]):
             recipients_input=str(kwargs.get("recipients", "")),
             subject=str(kwargs.get("subject", "")),
             body=str(kwargs.get("body", "")),
-            **dict(zip(("include_message_media", "attachment_paths"), _tool_attachment_options(kwargs))),
+            **dict(
+                zip(
+                    ("include_message_media", "attachment_paths"),
+                    _tool_attachment_options(kwargs),
+                )
+            ),
         )
 
 
@@ -307,7 +340,7 @@ class MailRelayNotifyOwnerHtmlTool(FunctionTool[AstrAgentContext]):
         self, context: ContextWrapper[AstrAgentContext], **kwargs: Any
     ) -> str:
         if self.plugin is None:
-            return "MailRelay Guard 当前不可用。"
+            return "我的邮件 当前不可用。"
         return await self.plugin.deliver_from_tool(
             tool_context=context,
             event=_tool_event(context),
@@ -316,7 +349,12 @@ class MailRelayNotifyOwnerHtmlTool(FunctionTool[AstrAgentContext]):
             body="",
             html_body=str(kwargs.get("html_body", "")),
             content_format="html",
-            **dict(zip(("include_message_media", "attachment_paths"), _tool_attachment_options(kwargs))),
+            **dict(
+                zip(
+                    ("include_message_media", "attachment_paths"),
+                    _tool_attachment_options(kwargs),
+                )
+            ),
         )
 
 
@@ -351,7 +389,7 @@ class MailRelaySendHtmlToSelfTool(FunctionTool[AstrAgentContext]):
         self, context: ContextWrapper[AstrAgentContext], **kwargs: Any
     ) -> str:
         if self.plugin is None:
-            return "MailRelay Guard 当前不可用。"
+            return "我的邮件 当前不可用。"
         return await self.plugin.deliver_from_tool(
             tool_context=context,
             event=_tool_event(context),
@@ -360,7 +398,12 @@ class MailRelaySendHtmlToSelfTool(FunctionTool[AstrAgentContext]):
             body="",
             html_body=str(kwargs.get("html_body", "")),
             content_format="html",
-            **dict(zip(("include_message_media", "attachment_paths"), _tool_attachment_options(kwargs))),
+            **dict(
+                zip(
+                    ("include_message_media", "attachment_paths"),
+                    _tool_attachment_options(kwargs),
+                )
+            ),
         )
 
 
@@ -399,7 +442,7 @@ class MailRelaySendHtmlToRecipientTool(FunctionTool[AstrAgentContext]):
         self, context: ContextWrapper[AstrAgentContext], **kwargs: Any
     ) -> str:
         if self.plugin is None:
-            return "MailRelay Guard 当前不可用。"
+            return "我的邮件 当前不可用。"
         return await self.plugin.deliver_from_tool(
             tool_context=context,
             event=_tool_event(context),
@@ -409,7 +452,12 @@ class MailRelaySendHtmlToRecipientTool(FunctionTool[AstrAgentContext]):
             body="",
             html_body=str(kwargs.get("html_body", "")),
             content_format="html",
-            **dict(zip(("include_message_media", "attachment_paths"), _tool_attachment_options(kwargs))),
+            **dict(
+                zip(
+                    ("include_message_media", "attachment_paths"),
+                    _tool_attachment_options(kwargs),
+                )
+            ),
         )
 
 
@@ -442,6 +490,10 @@ class MailRelayGuardPlugin(Star):
         self._mailbox_resolver = SelfMailboxResolver(None)
         self._llm_tools_registered = False
         self._html_tools_registered = False
+        self._offline_monitor = OfflinePlatformMonitor(
+            self.context, self._settings, self._smtp_client, self._offline_audit
+        )
+        self._offline_task: asyncio.Task[None] | None = None
         self._register_dashboard_apis()
 
     async def initialize(self) -> None:
@@ -477,6 +529,11 @@ class MailRelayGuardPlugin(Star):
                 )
                 self._html_tools_registered = True
 
+        if self._offline_task is None or self._offline_task.done():
+            self._offline_task = asyncio.create_task(
+                self._offline_monitor.run(), name=f"{PLUGIN_ID}:offline-monitor"
+            )
+
         logger.info(
             "[%s] initialized | smtp=%s:%s security=%s direct_tools=%s html_tools=%s",
             PLUGIN_ID,
@@ -490,6 +547,11 @@ class MailRelayGuardPlugin(Star):
     async def terminate(self) -> None:
         """Discard in-memory profile caches and pending verification codes."""
 
+        if self._offline_task is not None:
+            self._offline_task.cancel()
+            await asyncio.gather(self._offline_task, return_exceptions=True)
+            self._offline_task = None
+        self._offline_monitor.reset()
         self._mailboxes = None
         self._mail_history = None
         self._data_dir = None
@@ -503,6 +565,18 @@ class MailRelayGuardPlugin(Star):
         if not callable(register):
             return
         routes = (
+            (
+                "/webui/offline-status",
+                self.webui_offline_status,
+                ["GET"],
+                "Offline monitor status",
+            ),
+            (
+                "/webui/offline-test",
+                self.webui_offline_test,
+                ["POST"],
+                "Offline notice test",
+            ),
             ("/webui/summary", self.webui_summary, ["GET"], "MailRelay summary"),
             ("/webui/messages", self.webui_messages, ["GET"], "MailRelay messages"),
             (
@@ -553,7 +627,9 @@ class MailRelayGuardPlugin(Star):
         return json_response(
             {
                 "version": PLUGIN_VERSION,
-                "readiness": "ready" if not configuration_problems(settings) else "needs_config",
+                "readiness": "ready"
+                if not configuration_problems(settings)
+                else "needs_config",
                 "configuration_problems": configuration_problems(settings),
                 "smtp": {
                     "host": settings.smtp_host or None,
@@ -578,6 +654,11 @@ class MailRelayGuardPlugin(Star):
                     "history_available": history is not None,
                 },
                 "history": history_summary,
+                "offline": {
+                    "enabled": settings.enabled
+                    and settings.enable_offline_notifications,
+                    **self._offline_monitor.status(),
+                },
             }
         )
 
@@ -649,6 +730,36 @@ class MailRelayGuardPlugin(Star):
         """Return only non-secret settings that the Mail Center can edit."""
 
         return json_response(self._webui_settings_payload(self._settings()))
+
+    async def webui_offline_status(self):
+        settings = self._settings()
+        return json_response(
+            {
+                "enabled": settings.enabled and settings.enable_offline_notifications,
+                "effective_recipients": self._offline_monitor.recipient_summary(
+                    settings
+                ),
+                **self._offline_monitor.status(),
+            }
+        )
+
+    async def webui_offline_test(self):
+        result = await self._offline_monitor.send_test()
+        if not result["ok"]:
+            return error_response(result["message"], data=result, status_code=400)
+        return json_response(result)
+
+    async def _offline_audit(
+        self, settings, *, action, outcome, recipients=(), detail=""
+    ):
+        await self._audit(
+            settings,
+            action=action,
+            outcome=outcome,
+            actor=None,
+            recipients=recipients,
+            detail=detail,
+        )
 
     async def webui_settings_update(self):
         """Update a strict allowlist of non-secret runtime controls."""
@@ -739,8 +850,13 @@ class MailRelayGuardPlugin(Star):
         """Clear optional local history after an explicit browser confirmation."""
 
         payload = await read_json_body({})
-        if not isinstance(payload, dict) or payload.get("confirm") != "clear-mail-history":
-            return error_response("需要明确确认后才能清空本地邮件历史。", status_code=400)
+        if (
+            not isinstance(payload, dict)
+            or payload.get("confirm") != "clear-mail-history"
+        ):
+            return error_response(
+                "需要明确确认后才能清空本地邮件历史。", status_code=400
+            )
         history = await self._ensure_mail_history(self._settings())
         if history is None:
             return error_response("邮件历史尚未启用。", status_code=404)
@@ -824,7 +940,10 @@ class MailRelayGuardPlugin(Star):
         if not updates:
             raise ValueError("没有可保存的设置。")
         unsupported = set(updates) - (
-            _WEBUI_BOOLEAN_SETTINGS | _WEBUI_INTEGER_SETTINGS | _WEBUI_LIST_SETTINGS
+            _WEBUI_BOOLEAN_SETTINGS
+            | _WEBUI_INTEGER_SETTINGS
+            | _WEBUI_LIST_SETTINGS
+            | _WEBUI_TEXT_SETTINGS
         )
         if unsupported:
             raise ValueError("包含不允许从 WebUI 修改的配置项。")
@@ -840,7 +959,15 @@ class MailRelayGuardPlugin(Star):
             ):
                 raise ValueError(f"{key} 必须是字符串列表。")
 
+        for key in _WEBUI_TEXT_SETTINGS & set(updates):
+            if not isinstance(updates[key], str) or len(updates[key]) > 100000:
+                raise ValueError(f"{key} 必须是长度不超过 100000 的文本。")
+        if "offline_notify_recipients" in updates:
+            for value in updates["offline_notify_recipients"]:
+                validate_email_address(value, field_name="掉线通知收件人")
+
         candidate = dict(self.config)
+        original = dict(self.config)
         candidate.update(updates)
         normalized = load_settings(candidate)
         changed: set[str] = set()
@@ -853,12 +980,40 @@ class MailRelayGuardPlugin(Star):
                 changed.add(key)
         saver = getattr(self.config, "save_config", None)
         if changed and callable(saver):
-            saver()
+            try:
+                saver()
+            except OSError:
+                for key in changed:
+                    if key in original:
+                        self.config[key] = original[key]
+                    else:
+                        self.config.pop(key, None)
+                raise
+        if changed:
+            self._offline_monitor.wake()
         return changed
 
     def _webui_settings_payload(self, settings: MailRelaySettings) -> dict[str, Any]:
         return {
             "settings": {
+                **{
+                    key: (
+                        sorted(value)
+                        if isinstance(value := getattr(settings, key), frozenset)
+                        else value
+                    )
+                    for key in (
+                        _WEBUI_TEXT_SETTINGS
+                        | {
+                            "enable_offline_notifications",
+                            "offline_notify_on_recovery",
+                            "offline_check_interval_seconds",
+                            "offline_failure_threshold",
+                            "offline_notify_recipients",
+                            "offline_monitored_platforms",
+                        }
+                    )
+                },
                 "enabled": settings.enabled,
                 "enable_owner_delivery": settings.enable_owner_delivery,
                 "enable_self_delivery": settings.enable_self_delivery,
@@ -881,9 +1036,7 @@ class MailRelayGuardPlugin(Star):
                 "enable_inline_images": settings.enable_inline_images,
                 "max_attachments_per_message": settings.max_attachments_per_message,
                 "max_attachment_size_mb": settings.max_attachment_size_mb,
-                "max_total_attachment_size_mb": (
-                    settings.max_total_attachment_size_mb
-                ),
+                "max_total_attachment_size_mb": (settings.max_total_attachment_size_mb),
                 "attachment_fetch_timeout_seconds": (
                     settings.attachment_fetch_timeout_seconds
                 ),
@@ -918,7 +1071,7 @@ class MailRelayGuardPlugin(Star):
             yield event.plain_result("无法读取当前平台和发送者 ID。")
             return
         yield event.plain_result(
-            "MailRelay Guard 身份信息\n"
+            "我的邮件 身份信息\n"
             f"- platform_id: {actor.platform_id}\n"
             f"- platform_name: {actor.platform_name}\n"
             f"- sender_id: {actor.sender_id}\n"
@@ -1034,7 +1187,9 @@ class MailRelayGuardPlugin(Star):
         settings = self._settings()
         actor = get_actor_identity(event)
         if not self._is_configured_admin(event, actor, settings):
-            yield event.plain_result("无法查看 MailRelay Guard 状态：需要配置的 AstrBot 管理员身份。")
+            yield event.plain_result(
+                "无法查看 我的邮件 状态：需要配置的 AstrBot 管理员身份。"
+            )
             return
         yield event.plain_result(self._format_status(settings))
 
@@ -1050,7 +1205,9 @@ class MailRelayGuardPlugin(Star):
             return
         problems = configuration_problems(settings)
         if problems:
-            yield event.plain_result(self._format_configuration_problem("SMTP 测试未执行", problems))
+            yield event.plain_result(
+                self._format_configuration_problem("SMTP 测试未执行", problems)
+            )
             return
         try:
             await self._smtp_client.test_connection(settings)
@@ -1106,15 +1263,26 @@ class MailRelayGuardPlugin(Star):
                 settings=settings,
                 mode="owner",
                 recipients=recipients,
-                subject="MailRelay Guard SMTP 测试邮件",
+                subject="我的邮件 SMTP 测试邮件",
                 body=(
-                    "这是一封由 MailRelay Guard 发出的测试邮件。\n"
+                    "这是一封由 我的邮件 发出的测试邮件。\n"
                     f"发送时间：{now_text}\n"
                     "如果你收到此邮件，说明 SMTP、TLS 和授权码工作正常。"
                 ),
                 action="test_owner",
             )
         )
+
+    @filter.command("mailrelay_offline_test", alias={"邮件掉线测试"})
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def mailrelay_offline_test(self, event: AstrMessageEvent):
+        """向配置的通知邮箱发送 QQ 掉线测试邮件。"""
+        settings = self._settings()
+        if not self._is_configured_admin(event, get_actor_identity(event), settings):
+            yield event.plain_result("需要配置的 AstrBot 管理员身份。")
+            return
+        result = await self._offline_monitor.send_test()
+        yield event.plain_result(result["message"])
 
     async def deliver_from_tool(
         self,
@@ -1195,8 +1363,10 @@ class MailRelayGuardPlugin(Star):
                 )
                 if not body.strip() and attachments and content_format == "plain":
                     body = "邮件附件，请查收。"
-            if content_format == "html" and html_body and contains_cid_placeholders(
-                html_body
+            if (
+                content_format == "html"
+                and html_body
+                and contains_cid_placeholders(html_body)
             ):
                 if not settings.enable_inline_images:
                     raise MailRelayValidationError(
@@ -1230,9 +1400,7 @@ class MailRelayGuardPlugin(Star):
             attachments=attachments,
         )
 
-    async def request_mailbox_binding(
-        self, event: AstrMessageEvent, email: str
-    ) -> str:
+    async def request_mailbox_binding(self, event: AstrMessageEvent, email: str) -> str:
         """Send a verification code before storing a caller-provided fallback email."""
 
         settings = self._settings()
@@ -1243,7 +1411,9 @@ class MailRelayGuardPlugin(Star):
             return "邮箱未绑定：管理员已关闭给自己发邮件。"
         if not settings.self_binding_enabled:
             return "邮箱未绑定：管理员已关闭自助邮箱绑定。"
-        if settings.require_private_chat_for_binding and not event_is_private_chat(event):
+        if settings.require_private_chat_for_binding and not event_is_private_chat(
+            event
+        ):
             return "邮箱未绑定：为保护你的邮箱地址，请私聊爱丽丝后再执行此命令。"
         problems = configuration_problems(settings)
         if problems:
@@ -1274,7 +1444,7 @@ class MailRelayGuardPlugin(Star):
             settings=settings,
             mode="binding",
             recipients=[address],
-            subject="MailRelay Guard 邮箱绑定验证码",
+            subject="我的邮件 邮箱绑定验证码",
             body=(
                 "你正在为当前聊天账号绑定此邮箱，用于‘发给自己’。\n"
                 f"验证码：{code}\n"
@@ -1301,7 +1471,9 @@ class MailRelayGuardPlugin(Star):
             return "邮箱未验证：无法读取当前平台和发送者 ID。"
         if not settings.self_binding_enabled:
             return "邮箱未验证：管理员已关闭自助邮箱绑定。"
-        if settings.require_private_chat_for_binding and not event_is_private_chat(event):
+        if settings.require_private_chat_for_binding and not event_is_private_chat(
+            event
+        ):
             return "邮箱未验证：请私聊爱丽丝后再执行验证命令。"
         if self._mailboxes is None:
             return "邮箱未验证：插件本地存储不可用。"
@@ -1333,7 +1505,9 @@ class MailRelayGuardPlugin(Star):
         actor = get_actor_identity(event)
         if actor is None:
             return "邮箱未解绑：无法读取当前平台和发送者 ID。"
-        if settings.require_private_chat_for_binding and not event_is_private_chat(event):
+        if settings.require_private_chat_for_binding and not event_is_private_chat(
+            event
+        ):
             return "邮箱未解绑：请私聊爱丽丝后再执行解绑命令。"
         if self._mailboxes is None:
             return "邮箱未解绑：插件本地存储不可用。"
@@ -1362,7 +1536,9 @@ class MailRelayGuardPlugin(Star):
     ) -> list[str]:
         if mode == "owner":
             if is_placeholder_address(settings.owner_email):
-                raise MailRelayValidationError("请先在 owner_email 中填写主人的真实收件邮箱。")
+                raise MailRelayValidationError(
+                    "请先在 owner_email 中填写主人的真实收件邮箱。"
+                )
             return [validate_email_address(settings.owner_email, field_name="主人邮箱")]
         if mode == "self":
             mailbox = await self._mailbox_resolver.resolve(event, settings, actor)
@@ -1760,7 +1936,7 @@ class MailRelayGuardPlugin(Star):
         problems = configuration_problems(settings)
         readiness = "就绪" if not problems else "需要配置"
         lines = [
-            "MailRelay Guard 状态",
+            "我的邮件 状态",
             f"- 就绪状态：{readiness}",
             f"- SMTP：{settings.smtp_host or '(未填写)'}:{settings.smtp_port} / {settings.smtp_security}",
             f"- 发件账号：{_mask_email(settings.smtp_username)}",
@@ -1784,6 +1960,8 @@ class MailRelayGuardPlugin(Star):
             f"- 全局成功投递上限：每小时 {settings.max_messages_per_hour} 封",
             f"- 单用户成功投递上限：每小时 {settings.max_successful_messages_per_actor_per_hour} 封",
             f"- 单用户发送冷却：{settings.actor_min_send_interval_seconds} 秒",
+            f"- QQ 掉线通知：{'开启' if settings.enable_offline_notifications else '关闭'} / 间隔 {settings.offline_check_interval_seconds} 秒 / 连续失败 {settings.offline_failure_threshold} 次",
+            f"- 监控平台：{', '.join(sorted(settings.offline_monitored_platforms)) or '未配置'}",
         ]
         if problems:
             lines.append("- 待处理：")
@@ -1826,7 +2004,9 @@ def _mask_email(value: str) -> str:
 
 def _is_hex_token(value: str, length: int) -> bool:
     candidate = str(value or "")
-    return len(candidate) == length and all(char in "0123456789abcdef" for char in candidate)
+    return len(candidate) == length and all(
+        char in "0123456789abcdef" for char in candidate
+    )
 
 
 def _mailbox_source_label(source: str) -> str:

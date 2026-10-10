@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="我的邮件">
+  <defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#327968"/><stop offset="1" stop-color="#183f39"/></linearGradient><linearGradient id="paper" x2="0" y2="1"><stop stop-color="#fffaf0"/><stop offset="1" stop-color="#dcece5"/></linearGradient></defs>
+  <rect width="256" height="256" rx="64" fill="url(#bg)"/>
+  <circle cx="201" cy="46" r="55" fill="#a7d4bd" opacity=".09"/>
+  <path d="M49 79h158v105c0 12-8 20-20 20H69c-12 0-20-8-20-20Z" fill="url(#paper)"/>
+  <path d="m49 82 79 59 79-59" fill="none" stroke="#fffaf0" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m54 195 55-54m93 54-55-54" stroke="#8db6a7" stroke-width="5" fill="none" opacity=".6"/>
+  <path d="M164 132c18 0 28-7 28-7s10 7 28 7v27c0 26-28 39-28 39s-28-13-28-39Z" fill="#d8aa5a" stroke="#215248" stroke-width="6"/>
+  <path d="m180 159 9 9 18-21" fill="none" stroke="#fffaf0" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M108 58h40" stroke="#d8aa5a" stroke-width="8" stroke-linecap="round"/>
+</svg>

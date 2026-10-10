@@ -52,7 +52,7 @@
   },
   "sender_name": {
     "type": "string",
-    "default": "Alice MailRelay",
+    "default": "我的邮件",
     "description": "邮件发件人显示名称",
     "hint": "例如 Alice。不能包含换行符。"
   },
@@ -437,5 +437,77 @@
     "max": 10240,
     "description": "审计文件最大大小（KB）",
     "hint": "达到上限时保留一份 previous 文件并轮换当前审计文件。"
+  },
+  "enable_offline_notifications": {
+    "type": "bool",
+    "default": false,
+    "description": "启用 QQ 掉线邮件通知",
+    "hint": "开启后插件会周期性检测被监控的平台连接；检测到机器人掉线时自动给收件人发送提醒邮件。默认关闭。"
+  },
+  "offline_check_interval_seconds": {
+    "type": "int",
+    "default": 180,
+    "min": 30,
+    "max": 3600,
+    "description": "掉线检测间隔（秒）",
+    "hint": "每隔这么多秒检测一次机器人连接状态。数值越小发现掉线越快，但对平台接口的调用也越频繁。"
+  },
+  "offline_failure_threshold": {
+    "type": "int",
+    "default": 3,
+    "min": 1,
+    "max": 10,
+    "description": "判定掉线所需的连续失败次数",
+    "hint": "连续探测失败达到该次数后才判定为掉线，可避免网络抖动造成的误报。"
+  },
+  "offline_notify_on_recovery": {
+    "type": "bool",
+    "default": true,
+    "description": "机器人恢复时也发送通知",
+    "hint": "开启后，当机器人从掉线状态重新上线时，会再发送一封恢复提醒邮件。"
+  },
+  "offline_notify_recipients": {
+    "type": "list",
+    "items": {
+      "type": "string"
+    },
+    "default": [],
+    "description": "掉线通知收件人邮箱",
+    "hint": "填写接收掉线/恢复提醒的邮箱地址，可填多个。留空时自动回退到 owner_email（主人邮箱）。"
+  },
+  "offline_monitored_platforms": {
+    "type": "list",
+    "items": {
+      "type": "string"
+    },
+    "default": [
+      "aiocqhttp"
+    ],
+    "description": "需要监控掉线的平台标识",
+    "hint": "必须与 /mailrelay_whoami 显示的 platform_id 一致。NapCat / LLOneBot 等 OneBot 平台通常为 aiocqhttp。"
+  },
+  "offline_subject_template": {
+    "type": "text",
+    "default": "【我的邮件】QQ 机器人掉线提醒：{{nickname}}",
+    "description": "掉线邮件主题模板",
+    "hint": "支持变量：{{nickname}}、{{bot_id}}、{{platform}}、{{time}}、{{reason}}。留空时使用内置默认主题。"
+  },
+  "offline_body_template": {
+    "type": "text",
+    "default": "<div style=\"margin:0;padding:24px;background:#f3f5fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'PingFang SC','Microsoft YaHei',sans-serif;\">\n  <div style=\"max-width:520px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 10px 30px rgba(15,23,42,0.10);\">\n    <div style=\"background:linear-gradient(135deg,#ef4444,#b91c1c);padding:22px 28px;color:#ffffff;\">\n      <div style=\"font-size:20px;font-weight:700;\">🔴 机器人掉线提醒</div>\n      <div style=\"margin-top:6px;font-size:13px;opacity:0.92;\">检测到 QQ 机器人与平台的连接已断开</div>\n    </div>\n    <div style=\"padding:24px 28px;color:#1f2937;font-size:14px;line-height:1.7;\">\n      <p style=\"margin:0 0 18px;\">你的机器人似乎掉线了，请尽快检查 NapCat / LLOneBot 的运行状态与网络连接。</p>\n      <table style=\"width:100%;border-collapse:collapse;font-size:14px;\">\n        <tr><td style=\"padding:7px 0;color:#6b7280;width:84px;\">机器人</td><td style=\"padding:7px 0;color:#111827;font-weight:600;\">{{nickname}}</td></tr>\n        <tr><td style=\"padding:7px 0;color:#6b7280;\">账号</td><td style=\"padding:7px 0;color:#111827;\">{{bot_id}}</td></tr>\n        <tr><td style=\"padding:7px 0;color:#6b7280;\">平台</td><td style=\"padding:7px 0;color:#111827;\">{{platform}}</td></tr>\n        <tr><td style=\"padding:7px 0;color:#6b7280;\">掉线时间</td><td style=\"padding:7px 0;color:#111827;\">{{time}}</td></tr>\n        <tr><td style=\"padding:7px 0;color:#6b7280;\">原因</td><td style=\"padding:7px 0;color:#111827;\">{{reason}}</td></tr>\n      </table>\n    </div>\n    <div style=\"padding:16px 28px;background:#f9fafb;border-top:1px solid #eef2f7;color:#9ca3af;font-size:12px;\">此邮件由「我的邮件」自动发送，请勿直接回复。</div>\n  </div>\n</div>",
+    "description": "掉线邮件正文模板（HTML）",
+    "hint": "支持变量：{{nickname}}、{{bot_id}}、{{platform}}、{{time}}、{{reason}}。可自定义 HTML 卡片样式；留空时使用内置默认模板。"
+  },
+  "recovery_subject_template": {
+    "type": "text",
+    "default": "【我的邮件】QQ 机器人已恢复：{{nickname}}",
+    "description": "恢复邮件主题模板",
+    "hint": "支持变量：{{nickname}}、{{bot_id}}、{{platform}}、{{time}}、{{downtime}}。留空时使用内置默认主题。"
+  },
+  "recovery_body_template": {
+    "type": "text",
+    "default": "<div style=\"margin:0;padding:24px;background:#f3f5fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'PingFang SC','Microsoft YaHei',sans-serif;\">\n  <div style=\"max-width:520px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 10px 30px rgba(15,23,42,0.10);\">\n    <div style=\"background:linear-gradient(135deg,#22c55e,#15803d);padding:22px 28px;color:#ffffff;\">\n      <div style=\"font-size:20px;font-weight:700;\">🟢 机器人已恢复</div>\n      <div style=\"margin-top:6px;font-size:13px;opacity:0.92;\">QQ 机器人与平台的连接已重新建立</div>\n    </div>\n    <div style=\"padding:24px 28px;color:#1f2937;font-size:14px;line-height:1.7;\">\n      <p style=\"margin:0 0 18px;\">你的机器人重新上线了，服务已恢复正常。</p>\n      <table style=\"width:100%;border-collapse:collapse;font-size:14px;\">\n        <tr><td style=\"padding:7px 0;color:#6b7280;width:84px;\">机器人</td><td style=\"padding:7px 0;color:#111827;font-weight:600;\">{{nickname}}</td></tr>\n        <tr><td style=\"padding:7px 0;color:#6b7280;\">账号</td><td style=\"padding:7px 0;color:#111827;\">{{bot_id}}</td></tr>\n        <tr><td style=\"padding:7px 0;color:#6b7280;\">平台</td><td style=\"padding:7px 0;color:#111827;\">{{platform}}</td></tr>\n        <tr><td style=\"padding:7px 0;color:#6b7280;\">恢复时间</td><td style=\"padding:7px 0;color:#111827;\">{{time}}</td></tr>\n        <tr><td style=\"padding:7px 0;color:#6b7280;\">本次掉线</td><td style=\"padding:7px 0;color:#111827;\">{{downtime}}</td></tr>\n      </table>\n    </div>\n    <div style=\"padding:16px 28px;background:#f9fafb;border-top:1px solid #eef2f7;color:#9ca3af;font-size:12px;\">此邮件由「我的邮件」自动发送，请勿直接回复。</div>\n  </div>\n</div>",
+    "description": "恢复邮件正文模板（HTML）",
+    "hint": "支持变量：{{nickname}}、{{bot_id}}、{{platform}}、{{time}}、{{downtime}}。可自定义 HTML 卡片样式；留空时使用内置默认模板。"
   }
 }
