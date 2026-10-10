@@ -1,0 +1,106 @@
+/* ===========================================================================
+   我的邮件 · 设计令牌与信纸主题
+   每个主题是一套完整的调色板，像不同的信纸与邮戳。
+   全局令牌放在 :root，主题覆盖通过 [data-mail-theme="..."]。
+   =========================================================================== */
+:root{
+  --font-sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-serif:"Georgia","Times New Roman","Songti SC","STSong","Noto Serif SC","Source Han Serif SC",serif;
+  --font-mono:"SFMono-Regular",ui-monospace,"Cascadia Code","JetBrains Mono",Consolas,monospace;
+  --radius:15px;--radius-sm:10px;--radius-lg:22px;--radius-pill:999px;
+  --rail-w:250px;--topbar-h:70px;--content-max:1200px;
+  --t-fast:.16s ease;--t:.26s cubic-bezier(.22,.61,.36,1);
+  --ease-out:cubic-bezier(.22,.61,.36,1);
+}
+
+/* ---- 浅色：经典信纸（默认） ------------------------------------------------ */
+:root,:root[data-mail-theme="sage"]{
+  color-scheme:light;
+  --bg:#f3f5f0;--surface:#ffffff;--surface-2:#eef2ec;--surface-3:#e5ebe3;
+  --text:#1f2d29;--text-soft:#6b756e;--text-faint:#9aa49c;
+  --line:#e3e8e2;--line-strong:#d2dace;
+  --accent:#2b6a56;--accent-strong:#215340;--accent-contrast:#ffffff;--accent-wash:#e7f1ea;
+  --ok:#2f7d5b;--ok-wash:#e4f1e9;--warn:#9a7126;--warn-wash:#f4ecd8;--danger:#b2493f;--danger-wash:#f6e5e1;
+  --rail-bg:#1b3b31;--rail-text:#e8efe7;--rail-muted:#9db5a4;--rail-hover:#ffffff14;--rail-active-bg:#d9e8d4;--rail-active-text:#214633;--rail-border:#ffffff1f;
+  --hero-bg:linear-gradient(135deg,#e8f1e4 0%,#dbe8d7 100%);--hero-text:#274636;--hero-muted:#5b7061;
+  --shadow:0 20px 50px rgba(32,52,42,.09);--shadow-sm:0 6px 18px rgba(32,52,42,.07);--ring:#86ad8e;
+  --stamp:#c9d8c6;
+}
+/* ---- 浅色：奶油信笺 -------------------------------------------------------- */
+:root[data-mail-theme="ivory"]{
+  color-scheme:light;
+  --bg:#f6f1e7;--surface:#fffdf7;--surface-2:#f2ecdd;--surface-3:#ece2cf;
+  --text:#3a3326;--text-soft:#857a63;--text-faint:#a99e86;
+  --line:#e8ddc8;--line-strong:#d9caad;
+  --accent:#9a6a2f;--accent-strong:#7f5522;--accent-contrast:#fffaf0;--accent-wash:#f3e7d2;
+  --ok:#6a7a3a;--ok-wash:#eef0dc;--warn:#9a7126;--warn-wash:#f4e8cf;--danger:#a85141;--danger-wash:#f3e0d7;
+  --rail-bg:#39301f;--rail-text:#f3ead8;--rail-muted:#b8a98c;--rail-hover:#ffffff12;--rail-active-bg:#e9d9b6;--rail-active-text:#473819;--rail-border:#ffffff1a;
+  --hero-bg:linear-gradient(135deg,#f4e9d3 0%,#ecdcbd 100%);--hero-text:#473717;--hero-muted:#7c6b4b;
+  --shadow:0 20px 50px rgba(92,70,28,.11);--shadow-sm:0 6px 18px rgba(92,70,28,.09);--ring:#c7a15b;
+  --stamp:#e2d2ad;
+}
+/* ---- 浅色：晨雾海港 -------------------------------------------------------- */
+:root[data-mail-theme="harbor"]{
+  color-scheme:light;
+  --bg:#eef2f5;--surface:#ffffff;--surface-2:#e6edf2;--surface-3:#dce7ee;
+  --text:#1f2d38;--text-soft:#647480;--text-faint:#93a4b0;
+  --line:#dde6ec;--line-strong:#c7d5df;
+  --accent:#2d6b85;--accent-strong:#235870;--accent-contrast:#ffffff;--accent-wash:#e1edf3;
+  --ok:#2f7d6b;--ok-wash:#e2f0ec;--warn:#8f6f30;--warn-wash:#f1ead7;--danger:#af5050;--danger-wash:#f4e3e3;
+  --rail-bg:#1e3340;--rail-text:#e8eef2;--rail-muted:#9db0bd;--rail-hover:#ffffff14;--rail-active-bg:#d3e3ec;--rail-active-text:#224251;--rail-border:#ffffff1c;
+  --hero-bg:linear-gradient(135deg,#e4edf3 0%,#d6e4ee 100%);--hero-text:#21424f;--hero-muted:#59727f;
+  --shadow:0 20px 50px rgba(28,50,65,.11);--shadow-sm:0 6px 18px rgba(28,50,65,.09);--ring:#80a9c0;
+  --stamp:#c6d8e2;
+}
+/* ---- 浅色：玫瑰邮戳 -------------------------------------------------------- */
+:root[data-mail-theme="rose"]{
+  color-scheme:light;
+  --bg:#f7f0f1;--surface:#fffbfb;--surface-2:#f3e8ea;--surface-3:#ecdbde;
+  --text:#3a2a2e;--text-soft:#847075;--text-faint:#ad969b;
+  --line:#ecdee1;--line-strong:#ddc9ce;
+  --accent:#a24a63;--accent-strong:#863a50;--accent-contrast:#fff7f8;--accent-wash:#f3e1e6;
+  --ok:#567a52;--ok-wash:#e8f0e3;--warn:#9a7126;--warn-wash:#f5ead3;--danger:#b24a4a;--danger-wash:#f6e2e2;
+  --rail-bg:#39272f;--rail-text:#f4e8ec;--rail-muted:#c0a3ac;--rail-hover:#ffffff12;--rail-active-bg:#ecd3da;--rail-active-text:#4d2936;--rail-border:#ffffff1c;
+  --hero-bg:linear-gradient(135deg,#f3e2e7 0%,#ecd2d9 100%);--hero-text:#492a34;--hero-muted:#83606a;
+  --shadow:0 20px 50px rgba(80,40,55,.11);--shadow-sm:0 6px 18px rgba(80,40,55,.09);--ring:#c88aa0;
+  --stamp:#e4c9d1;
+}
+/* ---- 深色：墨色信笺（默认深色） ------------------------------------------- */
+:root[data-mail-theme="ink"]{
+  color-scheme:dark;
+  --bg:#141b18;--surface:#1c2621;--surface-2:#232f29;--surface-3:#2b3a32;
+  --text:#e6ece7;--text-soft:#9fb0a6;--text-faint:#76867c;
+  --line:#2e3b34;--line-strong:#3b4a41;
+  --accent:#93c7a9;--accent-strong:#a9d4bb;--accent-contrast:#10211a;--accent-wash:#26382e;
+  --ok:#86c7a0;--ok-wash:#22362b;--warn:#ddba7a;--warn-wash:#3a3326;--danger:#ef9a9a;--danger-wash:#3a2a2a;
+  --rail-bg:#0f1512;--rail-text:#d9e4dc;--rail-muted:#8fa397;--rail-hover:#ffffff0d;--rail-active-bg:#2b4336;--rail-active-text:#cfe7d7;--rail-border:#ffffff12;
+  --hero-bg:linear-gradient(135deg,#1f2d26 0%,#1a2721 100%);--hero-text:#dbe8df;--hero-muted:#93a89a;
+  --shadow:0 22px 54px rgba(0,0,0,.38);--shadow-sm:0 6px 18px rgba(0,0,0,.3);--ring:#5f8f6f;
+  --stamp:#30423a;
+}
+/* ---- 深色：午夜蓝 ---------------------------------------------------------- */
+:root[data-mail-theme="nocturne"]{
+  color-scheme:dark;
+  --bg:#121824;--surface:#1a2232;--surface-2:#212b3e;--surface-3:#2a3650;
+  --text:#e4e9f2;--text-soft:#9fabc0;--text-faint:#74839c;
+  --line:#2b3650;--line-strong:#3a4866;
+  --accent:#7fb4e6;--accent-strong:#99c6f0;--accent-contrast:#0e1726;--accent-wash:#243149;
+  --ok:#7fc3b0;--ok-wash:#22362f;--warn:#e0bd82;--warn-wash:#3a3326;--danger:#ef9a9a;--danger-wash:#3a2a2a;
+  --rail-bg:#0e1420;--rail-text:#dbe3f0;--rail-muted:#8e9bb4;--rail-hover:#ffffff0d;--rail-active-bg:#26354f;--rail-active-text:#cadcf3;--rail-border:#ffffff12;
+  --hero-bg:linear-gradient(135deg,#1b2538 0%,#17202f 100%);--hero-text:#dde6f2;--hero-muted:#93a2bc;
+  --shadow:0 22px 54px rgba(0,0,0,.42);--shadow-sm:0 6px 18px rgba(0,0,0,.34);--ring:#5f84bf;
+  --stamp:#2a3650;
+}
+/* ---- 深色：复古邮筒 -------------------------------------------------------- */
+:root[data-mail-theme="espresso"]{
+  color-scheme:dark;
+  --bg:#1a1510;--surface:#241d16;--surface-2:#2d241b;--surface-3:#392d20;
+  --text:#efe6d8;--text-soft:#b4a68f;--text-faint:#8a7c66;
+  --line:#382d20;--line-strong:#473826;
+  --accent:#d79a4e;--accent-strong:#e6ac63;--accent-contrast:#231708;--accent-wash:#38291a;
+  --ok:#a8be6a;--ok-wash:#313520;--warn:#e0bd82;--warn-wash:#3a3326;--danger:#e89a7a;--danger-wash:#3a271f;
+  --rail-bg:#140f0a;--rail-text:#efe3d2;--rail-muted:#ab9b82;--rail-hover:#ffffff0d;--rail-active-bg:#3d2e1c;--rail-active-text:#ecd6ad;--rail-border:#ffffff12;
+  --hero-bg:linear-gradient(135deg,#2a2016 0%,#231a11 100%);--hero-text:#ecdcc2;--hero-muted:#ad9c80;
+  --shadow:0 22px 54px rgba(0,0,0,.42);--shadow-sm:0 6px 18px rgba(0,0,0,.34);--ring:#c69a5a;
+  --stamp:#3b2e1d;
+}

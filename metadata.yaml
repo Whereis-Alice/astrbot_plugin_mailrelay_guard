@@ -2,7 +2,7 @@ name: astrbot_plugin_mailrelay_guard
 display_name: 我的邮件
 desc: 让 AstrBot 发送邮件、图片与文件，查看投递记录，并在 NapCat 或 LLOneBot 的 QQ 机器人掉线和恢复时通过邮件提醒。
 short_desc: 邮件发送与阅读、HTML 模板、图片文件附件、QQ 掉线守护与趋势统计，收件人权限由服务端校验。
-version: v1.6.0
+version: v1.7.0
 author: Huli3
 repo: https://github.com/Whereis-Alice/astrbot_plugin_mailrelay_guard
 astrbot_version: ">=4.27.2,<5"

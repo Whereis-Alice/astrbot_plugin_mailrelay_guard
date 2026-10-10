@@ -1,0 +1,141 @@
+/* ===========================================================================
+   charts.css · 掉线概览（折线趋势 / 连接时间轴 / 掉线事件）
+   覆盖 offline-charts.js 输出的结构，令牌全部来自 tokens.css。
+   阅读与强调用衬线体，界面标签用无衬线体。
+   =========================================================================== */
+
+/* ---- 概览卡外壳（.card offline-overview） -------------------------------- */
+.offline-overview{margin:26px 0}
+.offline-overview .card-head{flex-wrap:wrap}
+.offline-overview>#history-alert:not(:empty){padding:14px 22px 0}
+.offline-overview>#history-content{padding:18px 22px 22px}
+#history-content[aria-busy="true"]{opacity:.55;transition:opacity var(--t-fast)}
+
+/* 顶部筛选（时间范围 / 账号 / 刷新） */
+.history-filters{display:flex;flex-wrap:wrap;align-items:center;gap:9px;flex:none}
+.history-filters select{width:auto;min-width:130px}
+@media (max-width:620px){
+  .history-filters{width:100%}
+  .history-filters select{flex:1 1 auto;min-width:120px}
+}
+
+/* ---- 概要指标 ------------------------------------------------------------ */
+.history-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+@media (max-width:760px){.history-stats{grid-template-columns:1fr 1fr}}
+.history-stats>div{
+  display:flex;flex-direction:column;gap:5px;padding:14px 16px;
+  background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius);
+}
+.history-stats>div>span{font-size:12px;color:var(--text-soft)}
+.history-stats>div>strong{font-family:var(--font-serif);font-size:21px;font-weight:600;line-height:1.15;color:var(--text)}
+.history-stats>div>small{font-size:11px;color:var(--text-faint);line-height:1.45}
+
+/* ---- 分区标题（趋势 / 时间轴 / 事件） ----------------------------------- */
+.history-section-head{
+  display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:10px;
+  margin:22px 0 12px;
+}
+.history-section-head h3{font-family:var(--font-serif);font-size:16px;font-weight:600;color:var(--text)}
+.history-section-head p{margin-top:3px;font-size:12.5px;color:var(--text-soft)}
+.history-observed{
+  flex:none;padding:4px 11px;border-radius:var(--radius-pill);
+  background:var(--accent-wash);color:var(--accent-strong);font-size:12px;font-weight:600;
+}
+
+/* ---- 折线趋势图 ---------------------------------------------------------- */
+.history-chart{
+  margin-top:0;padding:12px 10px 4px;
+  background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius);
+}
+.history-chart svg{width:100%;height:auto;display:block}
+.chart-grid{stroke:var(--line);stroke-width:1}
+.chart-label{fill:var(--text-faint);font-size:11px;font-family:var(--font-sans)}
+.chart-area{fill:var(--accent);opacity:.1}
+.chart-line{fill:none;stroke:var(--accent);stroke-width:2.2;stroke-linejoin:round;stroke-linecap:round}
+.chart-missing{stroke:var(--line-strong);stroke-width:2}
+.chart-point{cursor:pointer}
+.chart-point:focus{outline:none}
+.chart-hit{fill:transparent}
+.chart-point:focus-visible .chart-hit{stroke:var(--ring);stroke-width:2}
+.chart-cursor{stroke:var(--accent);stroke-width:1;stroke-dasharray:3 3;opacity:0;transition:opacity var(--t-fast)}
+.chart-dot{fill:var(--surface);stroke:var(--accent);stroke-width:2;transition:r var(--t-fast),fill var(--t-fast)}
+.chart-point:hover .chart-cursor,
+.chart-point:focus-visible .chart-cursor,
+.chart-point.history-active .chart-cursor{opacity:.55}
+.chart-point:hover .chart-dot,
+.chart-point:focus-visible .chart-dot,
+.chart-point.history-active .chart-dot{fill:var(--accent);r:6}
+
+/* 悬停 / 聚焦 / 点选后的详情卡 */
+.history-detail{
+  display:flex;flex-direction:column;gap:4px;margin-top:12px;padding:14px 16px;min-height:76px;
+  background:var(--accent-wash);border-radius:var(--radius);
+}
+.history-detail strong{font-size:13.5px;font-weight:700;color:var(--accent-strong)}
+.history-detail span{font-size:12.5px;color:var(--text-soft);line-height:1.55}
+
+/* ---- 账号连接时间轴 ------------------------------------------------------ */
+.timeline-list{display:flex;flex-direction:column;gap:14px}
+.timeline-row{display:grid;grid-template-columns:160px 1fr;gap:14px;align-items:center}
+@media (max-width:620px){.timeline-row{grid-template-columns:1fr;gap:7px}}
+.timeline-identity{display:flex;flex-direction:column;min-width:0}
+.timeline-identity strong{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.timeline-identity small{font-size:11.5px;color:var(--text-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.timeline-track{position:relative;height:28px;border-radius:var(--radius-sm);background:var(--surface-3);overflow:hidden}
+.timeline-segment{
+  position:absolute;top:0;bottom:0;min-width:2px;padding:0;border:none;
+  background:var(--line-strong);transition:filter var(--t-fast);
+}
+.timeline-segment.online{background:var(--ok)}
+.timeline-segment.offline{background:var(--danger)}
+.timeline-segment.suspect{background:var(--warn)}
+.timeline-segment.unknown{background:var(--line-strong)}
+.timeline-segment:focus-visible{outline:none}
+.timeline-segment:hover,
+.timeline-segment:focus-visible,
+.timeline-segment.history-active{box-shadow:inset 0 0 0 2px var(--ring);filter:brightness(1.06)}
+.timeline-range{display:flex;align-items:center;justify-content:space-between;margin-top:8px;font-size:11.5px;color:var(--text-faint)}
+
+/* 图例 */
+.timeline-legend{display:flex;flex-wrap:wrap;gap:6px 14px}
+.timeline-legend span{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-soft)}
+.timeline-legend i{width:12px;height:12px;flex:none;border-radius:3px;background:var(--line-strong)}
+.timeline-legend i.online{background:var(--ok)}
+.timeline-legend i.offline{background:var(--danger)}
+.timeline-legend i.suspect{background:var(--warn)}
+.timeline-legend i.unknown{background:var(--line-strong)}
+.timeline-legend i.gap{background:transparent;border:1px dashed var(--line-strong)}
+
+/* ---- 掉线事件 ------------------------------------------------------------ */
+.history-no-events{
+  display:flex;align-items:center;gap:9px;padding:14px 16px;
+  background:var(--ok-wash);color:var(--ok);border-radius:var(--radius);
+  font-size:13.5px;line-height:1.5;
+}
+.history-no-events .icon{width:18px;height:18px}
+
+.incident-list{display:flex;flex-direction:column;gap:10px}
+.incident{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.incident summary{
+  display:flex;align-items:center;gap:12px;padding:13px 16px;cursor:pointer;
+  list-style:none;transition:background var(--t-fast);
+}
+.incident summary::-webkit-details-marker{display:none}
+.incident summary:hover{background:var(--surface-3)}
+.incident summary:focus-visible{box-shadow:inset 0 0 0 2px var(--ring)}
+.incident-marker{width:10px;height:10px;flex:none;border-radius:50%;background:var(--danger)}
+.incident-marker.recovered{background:var(--ok)}
+.incident summary .grow{display:flex;flex-direction:column;gap:1px}
+.incident summary .grow strong{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.incident summary .grow small{font-size:11.5px;color:var(--text-faint)}
+.incident-duration{flex:none;font-size:13px;font-weight:600;color:var(--text-soft)}
+.incident summary .icon{width:17px;height:17px;flex:none;color:var(--text-faint);transition:transform var(--t-fast)}
+.incident[open] summary .icon{transform:rotate(90deg)}
+.incident-body{
+  display:flex;flex-direction:column;gap:7px;padding:14px 16px 16px;border-top:1px solid var(--line);
+}
+.incident-body p{font-size:12.5px;color:var(--text-soft);line-height:1.6}
+.incident-list + .monitor-note{margin-top:10px}
+
+/* ---- 脚注（class 为 monitor-note history-footnote） --------------------- */
+.history-footnote{margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}

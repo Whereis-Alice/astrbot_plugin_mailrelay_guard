@@ -1,39 +1,33 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-mail-theme="sage">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>我的邮件 · 邮件中心</title>
+  <title>我的邮件 · 邮件工作空间</title>
   <link rel="icon" href="./assets/logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./mail-center.css">
+  <script>
+    // 在样式加载前确定主题，避免首屏闪烁。与 theme.js 的键名和迁移保持一致。
+    (function () {
+      try {
+        var raw = localStorage.getItem('my-mail-theme');
+        var legacy = { light: 'sage', dark: 'ink' };
+        var known = ['sage','ivory','harbor','rose','ink','nocturne','espresso'];
+        var theme = legacy[raw] || (known.indexOf(raw) >= 0 ? raw : null);
+        if (!theme) theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'ink' : 'sage';
+        document.documentElement.setAttribute('data-mail-theme', theme);
+      } catch (e) { /* 受限环境时回退到默认 sage */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./tokens.css">
+  <link rel="stylesheet" href="./base.css">
+  <link rel="stylesheet" href="./components.css">
+  <link rel="stylesheet" href="./layout.css">
+  <link rel="stylesheet" href="./views.css">
+  <link rel="stylesheet" href="./charts.css">
 </head>
 <body>
-  <div class="app-shell">
-    <aside class="sidebar" id="sidebar" aria-label="主导航">
-      <a class="brand" href="#overview"><img src="./assets/logo.svg" alt="" width="42" height="42"><span>我的邮件<small>每一封，都有着落。</small></span></a>
-      <div class="nav-label">工作空间</div>
-      <nav>
-        <a href="#overview" data-nav="overview"><span data-icon="grid"></span>运行概览</a>
-        <a href="#mailbox" data-nav="mailbox"><span data-icon="mail"></span>邮件中心</a>
-        <a href="#monitor" data-nav="monitor"><span data-icon="pulse"></span>掉线守护</a>
-        <a href="#settings" data-nav="settings"><span data-icon="sliders"></span>投递设置</a>
-      </nav>
-      <div class="sidebar-note"><span class="status-dot"></span> 邮件与连接，一处照看<p>基于 AstrBot 的邮件工作空间</p></div>
-      <button id="theme-toggle" class="theme-button" type="button"><span data-icon="moon"></span><span>切换深色外观</span></button>
-    </aside>
-    <div class="workspace">
-      <header class="topbar">
-        <div class="breadcrumb"><button class="icon-button menu-toggle" id="menu-toggle" type="button" aria-label="打开导航" aria-expanded="false"><span data-icon="menu"></span></button><span>我的邮件</span><span class="slash">/</span><strong id="breadcrumb-title">运行概览</strong></div>
-        <div class="topbar-actions"><span class="badge" id="connection-state">连接中</span><button class="icon-button" id="refresh" type="button" aria-label="刷新当前页面"><span data-icon="refresh"></span></button></div>
-      </header>
-      <div id="demo-banner" class="demo-banner" hidden>当前是演示预览，展示示例数据。测试与保存只影响本页，不会发送真实邮件。</div>
-      <main id="main" tabindex="-1" aria-busy="true"><div class="loading"><span class="spinner"></span>正在打开邮件工作空间…</div></main>
-      <footer class="footer"><span>我的邮件</span><span>温柔提醒 · 安心投递</span></footer>
-    </div>
-  </div>
-  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-  <dialog id="confirm-dialog"><form method="dialog"><h2 id="confirm-title">请确认</h2><p id="confirm-text"></p><div class="button-row"><button value="cancel" class="button secondary">取消</button><button value="confirm" class="button danger">确认</button></div></form></dialog>
-  <script type="module" src="./mail-center.js"></script>
+  <div id="app"></div>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>
